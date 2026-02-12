@@ -2,7 +2,12 @@ import TelegramBot from 'node-telegram-bot-api';
 import { Op } from 'sequelize';
 import { convertOggToWav, speechToTextYandex } from './yandexSpeechService.js';
 import { processChatMessage } from './chatgptHandler.js';
-import { createEvent, getEventsForPeriod, updateEvent, deleteEvent  } from './googleCalendarService.js';
+import {
+  createEvent,
+  getEventsForPeriod,
+  updateEvent,
+  deleteEvent,
+} from './googleCalendarService.js';
 import models from '../models/index.js';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
@@ -13,7 +18,7 @@ import {
   computeEndDateTime,
   extractEndTime,
   getLocalDateTime,
-  nextDay
+  nextDay,
 } from '../utils/dateUtils.js';
 import { createNote, getPendingNotes, markNotesCompleted } from './noteService.js';
 
@@ -31,7 +36,7 @@ const chatHistories = {};
 
 // Функция для обработки ответа GPT (общая для голосовых и текстовых сообщений)
 async function handleGPTResponse(reply, inputText, msg) {
-  let textToSend = "";
+  let textToSend = '';
   let parsed;
   try {
     // Если GPT возвращает данные через function_call, парсим аргументы; иначе из reply.content
@@ -41,38 +46,38 @@ async function handleGPTResponse(reply, inputText, msg) {
       parsed = JSON.parse(reply.content);
     }
   } catch (e) {
-    console.error("Ошибка парсинга ответа GPT:", e);
-    parsed = { type: "chat", text: reply.content };
+    console.error('Ошибка парсинга ответа GPT:', e);
+    parsed = { type: 'chat', text: reply.content };
   }
-  
+
   switch (parsed.type) {
-    case "event": {
+    case 'event': {
       try {
         // Если указан дополнительный параметр action, обрабатываем обновление или удаление
-        if (parsed.action === "update") {
+        if (parsed.action === 'update') {
           // Обновление мероприятия: ожидаем eventId и updatedDetails
           const { eventId, updatedDetails } = parsed;
           if (!eventId || !updatedDetails) {
-            throw new Error("Не указаны eventId или updatedDetails для обновления.");
+            throw new Error('Не указаны eventId или updatedDetails для обновления.');
           }
-          
+
           // Проверяем, выглядит ли eventId как настоящий Google Calendar ID.
           // Обычно это строка, состоящая из букв, цифр, дефисов и подчёркиваний.
           const validIdPattern = /^[A-Za-z0-9_-]+$/;
           let realEventId = eventId;
-          
+
           if (!validIdPattern.test(realEventId)) {
             // Если eventId не проходит проверку, ищем мероприятие по названию в локальной базе.
             // Здесь можно добавить дополнительные критерии (например, по дате).
             const existingEvent = await models.Event.findOne({
-              where: { title: updatedDetails.title }
+              where: { title: updatedDetails.title },
             });
             if (!existingEvent) {
-              throw new Error("Мероприятие с указанным названием не найдено для обновления.");
+              throw new Error('Мероприятие с указанным названием не найдено для обновления.');
             }
             realEventId = existingEvent.google_calendar_event_id;
           }
-          
+
           // Корректируем даты, если они указаны
           if (updatedDetails.startDate) {
             updatedDetails.startDate = correctYear(updatedDetails.startDate);
@@ -80,46 +85,59 @@ async function handleGPTResponse(reply, inputText, msg) {
           if (updatedDetails.endDate) {
             updatedDetails.endDate = correctYear(updatedDetails.endDate);
           }
-          
+
           let updateBody = {};
           // Если времена не указаны, считаем, что это all-day событие.
           if (!updatedDetails.startTime && !updatedDetails.endTime) {
             updateBody = {
               summary: updatedDetails.title,
               start: { date: updatedDetails.startDate },
-              end: { date: nextDay(updatedDetails.endDate) }
+              end: { date: nextDay(updatedDetails.endDate) },
             };
             if (updatedDetails.location) updateBody.location = updatedDetails.location;
             if (updatedDetails.participants) {
-              updateBody.attendees = updatedDetails.participants.map(email => ({ email }));
+              updateBody.attendees = updatedDetails.participants.map((email) => ({ email }));
             }
           } else {
             // Если времена указаны, формируем тело для timed события.
-            if (!updatedDetails.startDate || !updatedDetails.startTime || !updatedDetails.endDate || !updatedDetails.endTime) {
-              throw new Error("Для обновления timed мероприятия необходимо указать startDate, startTime, endDate и endTime.");
+            if (
+              !updatedDetails.startDate ||
+              !updatedDetails.startTime ||
+              !updatedDetails.endDate ||
+              !updatedDetails.endTime
+            ) {
+              throw new Error(
+                'Для обновления timed мероприятия необходимо указать startDate, startTime, endDate и endTime.'
+              );
             }
             updateBody = {
               summary: updatedDetails.title,
-              start: { dateTime: `${updatedDetails.startDate}T${updatedDetails.startTime}:00`, timeZone: "Asia/Dubai" },
-              end: { dateTime: `${updatedDetails.endDate}T${updatedDetails.endTime}:00`, timeZone: "Asia/Dubai" }
+              start: {
+                dateTime: `${updatedDetails.startDate}T${updatedDetails.startTime}:00`,
+                timeZone: 'Asia/Dubai',
+              },
+              end: {
+                dateTime: `${updatedDetails.endDate}T${updatedDetails.endTime}:00`,
+                timeZone: 'Asia/Dubai',
+              },
             };
             if (updatedDetails.location) updateBody.location = updatedDetails.location;
             if (updatedDetails.participants) {
-              updateBody.attendees = updatedDetails.participants.map(email => ({ email }));
+              updateBody.attendees = updatedDetails.participants.map((email) => ({ email }));
             }
           }
-          
+
           const updatedEvent = await updateEvent(realEventId, updateBody);
-          console.log("Мероприятие обновлено:", updatedEvent);
-          textToSend = `Мероприятие обновлено:\nНазвание: ${updatedEvent.summary}\nМесто: ${updatedEvent.location || "не указано"}`;
-        } else if (parsed.action === "delete") {
+          console.log('Мероприятие обновлено:', updatedEvent);
+          textToSend = `Мероприятие обновлено:\nНазвание: ${updatedEvent.summary}\nМесто: ${updatedEvent.location || 'не указано'}`;
+        } else if (parsed.action === 'delete') {
           // Удаление мероприятия: ожидаем eventId
           const { eventId } = parsed;
           if (!eventId) {
-            throw new Error("Не указан eventId для удаления.");
+            throw new Error('Не указан eventId для удаления.');
           }
           await deleteEvent(eventId);
-          console.log("Мероприятие удалено:", eventId);
+          console.log('Мероприятие удалено:', eventId);
           textToSend = `Мероприятие удалено.`;
         } else {
           // Если action не задан, создаем новое мероприятие (логика создания события)
@@ -130,41 +148,46 @@ async function handleGPTResponse(reply, inputText, msg) {
           const title = parsed.title;
           const participants = parsed.participants;
           const location = parsed.location;
-          
+
           // Корректировка даты через входной текст
           const expectedDate = expectedDateForUserInput(inputText);
           if (expectedDate && startDateField !== expectedDate) {
-            console.log("Корректировка startDate: ожидалось", expectedDate, "получено", startDateField);
+            console.log(
+              'Корректировка startDate: ожидалось',
+              expectedDate,
+              'получено',
+              startDateField
+            );
             startDateField = expectedDate;
           }
           startDateField = correctYear(startDateField);
-          
-          if (!startTimeField || startTimeField.trim() === "") {
-            startTimeField = "00:00";
+
+          if (!startTimeField || startTimeField.trim() === '') {
+            startTimeField = '00:00';
           }
-          
+
           // Определяем, является ли событие многодневным
           let isMultiDay = false;
           if (endDateField && endDateField !== startDateField) {
             isMultiDay = true;
           }
-          
+
           // Если endTime не задан, пробуем извлечь его
           if (!endTimeField) {
             const extracted = extractEndTime(inputText);
             if (extracted && isValidDateTime(startDateField, extracted)) {
               endTimeField = extracted;
-              console.log("Извлечено endTime из текста:", endTimeField);
+              console.log('Извлечено endTime из текста:', endTimeField);
             }
           }
-          
+
           // Определяем, является ли мероприятие all-day.
           // Здесь мы полагаемся на то, что если в запросе отсутствует время, GPT вернула соответствующие поля.
           let isAllDay = false;
           if (!parsed.startTime && !parsed.endTime) {
             isAllDay = true;
           }
-          
+
           let computedStart, computedEnd;
           if (isAllDay) {
             computedStart = startDateField;
@@ -179,41 +202,41 @@ async function handleGPTResponse(reply, inputText, msg) {
               computedEnd = `${startDateField}T${endTimeField}:00`;
             }
           }
-          
-          console.log("Создание события с данными:", {
+
+          console.log('Создание события с данными:', {
             start: computedStart,
             end: computedEnd,
             title,
             location,
             participants,
             isMultiDay,
-            isAllDay
+            isAllDay,
           });
-          
-          const summary = title && title.trim() !== "" ? title.trim() : "Мероприятие";
-          
+
+          const summary = title && title.trim() !== '' ? title.trim() : 'Мероприятие';
+
           let eventDetails;
           if (isAllDay) {
             eventDetails = {
               summary,
               description: msg.text || inputText,
-              location: location || "",
+              location: location || '',
               start: { date: computedStart },
-              end: { date: computedEnd }
+              end: { date: computedEnd },
             };
           } else {
             eventDetails = {
               summary,
               description: msg.text || inputText,
-              location: location || "",
-              start: { dateTime: computedStart, timeZone: "Asia/Dubai" },
-              end: { dateTime: computedEnd, timeZone: "Asia/Dubai" }
+              location: location || '',
+              start: { dateTime: computedStart, timeZone: 'Asia/Dubai' },
+              end: { dateTime: computedEnd, timeZone: 'Asia/Dubai' },
             };
           }
-          
+
           const createdEvent = await createEvent(eventDetails);
-          console.log("Событие создано в Google Calendar:", createdEvent);
-          
+          console.log('Событие создано в Google Calendar:', createdEvent);
+
           // Сохранение в локальной базе
           let startObj, endObj;
           if (isAllDay) {
@@ -227,7 +250,7 @@ async function handleGPTResponse(reply, inputText, msg) {
               endObj = getLocalDateTime(startDateField, endTimeField);
             }
           }
-          
+
           const localEvent = await models.Event.create({
             title: summary,
             description: msg.text || inputText,
@@ -235,91 +258,104 @@ async function handleGPTResponse(reply, inputText, msg) {
             end_date: endObj,
             google_calendar_event_id: createdEvent.id,
             created_at: new Date(),
-            updated_at: new Date()
+            updated_at: new Date(),
           });
-          console.log("Локальное событие сохранено:", localEvent);
-          
+          console.log('Локальное событие сохранено:', localEvent);
+
           if (isAllDay) {
-            textToSend = `Событие запланировано:\nНазвание: ${summary}\nВесь день с ${computedStart} по ${computedEnd}\nМесто: ${location || "не указано"}\nУчастники: ${participants ? participants.join(", ") : "нет"}`;
+            textToSend = `Событие запланировано:\nНазвание: ${summary}\nВесь день с ${computedStart} по ${computedEnd}\nМесто: ${location || 'не указано'}\nУчастники: ${participants ? participants.join(', ') : 'нет'}`;
           } else {
-            textToSend = `Событие запланировано:\nНазвание: ${summary}\nНачало: ${computedStart}\nОкончание: ${computedEnd}\nМесто: ${location || "не указано"}\nУчастники: ${participants ? participants.join(", ") : "нет"}`;
+            textToSend = `Событие запланировано:\nНазвание: ${summary}\nНачало: ${computedStart}\nОкончание: ${computedEnd}\nМесто: ${location || 'не указано'}\nУчастники: ${participants ? participants.join(', ') : 'нет'}`;
           }
         }
       } catch (err) {
-        console.error("Ошибка при обработке запроса на создание события:", err);
-        textToSend = "Ошибка при обработке запроса на создание события.";
+        console.error('Ошибка при обработке запроса на создание события:', err);
+        textToSend = 'Ошибка при обработке запроса на создание события.';
       }
       break;
-    }       
-    case "note": {
-      if (parsed.action === "create") {
+    }
+    case 'note': {
+      if (parsed.action === 'create') {
         try {
           const noteContent = parsed.content || inputText;
-          if (!noteContent || noteContent.trim() === "") {
-            throw new Error("Содержание заметки не указано.");
+          if (!noteContent || noteContent.trim() === '') {
+            throw new Error('Содержание заметки не указано.');
           }
           const createdNote = await createNote({ content: noteContent, completed: false });
-          console.log("Заметка создана:", createdNote);
-          textToSend = "Заметка успешно создана.";
+          console.log('Заметка создана:', createdNote);
+          textToSend = 'Заметка успешно создана.';
         } catch (err) {
-          console.error("Ошибка при создании заметки:", err);
-          textToSend = "Ошибка при создании заметки.";
+          console.error('Ошибка при создании заметки:', err);
+          textToSend = 'Ошибка при создании заметки.';
         }
-      } else if (parsed.action === "show") {
+      } else if (parsed.action === 'show') {
         try {
-          const filter = parsed.filter || "pending";
+          const filter = parsed.filter || 'pending';
           let notes;
-          if (filter === "all") {
+          if (filter === 'all') {
             notes = await models.Note.findAll({ order: [['created_at', 'ASC']] });
-          } else if (filter === "completed") {
-            notes = await models.Note.findAll({ where: { completed: true }, order: [['created_at', 'ASC']] });
+          } else if (filter === 'completed') {
+            notes = await models.Note.findAll({
+              where: { completed: true },
+              order: [['created_at', 'ASC']],
+            });
           } else {
-            notes = await models.Note.findAll({ where: { completed: false }, order: [['created_at', 'ASC']] });
+            notes = await models.Note.findAll({
+              where: { completed: false },
+              order: [['created_at', 'ASC']],
+            });
           }
           if (notes.length === 0) {
-            textToSend = "Заметки не найдены.";
+            textToSend = 'Заметки не найдены.';
           } else {
-            textToSend = "Заметки:\n" + notes.map(note => `${note.id}. ${note.content} [${note.completed ? "выполнена" : "актуальна"}]`).join("\n");
+            textToSend =
+              'Заметки:\n' +
+              notes
+                .map(
+                  (note) =>
+                    `${note.id}. ${note.content} [${note.completed ? 'выполнена' : 'актуальна'}]`
+                )
+                .join('\n');
           }
         } catch (err) {
-          console.error("Ошибка при получении заметок:", err);
-          textToSend = "Ошибка при получении заметок.";
+          console.error('Ошибка при получении заметок:', err);
+          textToSend = 'Ошибка при получении заметок.';
         }
-      } else if (parsed.action === "complete") {
+      } else if (parsed.action === 'complete') {
         try {
           if (parsed.ids && Array.isArray(parsed.ids) && parsed.ids.length > 0) {
             await markNotesCompleted(parsed.ids);
-            textToSend = "Указанные заметки помечены как выполненные.";
+            textToSend = 'Указанные заметки помечены как выполненные.';
           } else if (parsed.content) {
             // Используем оператор iLike для поиска заметок без учета регистра
             const notes = await models.Note.findAll({
               where: {
                 content: {
-                  [Op.iLike]: `%${parsed.content}%`
+                  [Op.iLike]: `%${parsed.content}%`,
                 },
-                completed: false
-              }
+                completed: false,
+              },
             });
             if (notes.length === 0) {
-              textToSend = "Заметки не найдены для обновления.";
+              textToSend = 'Заметки не найдены для обновления.';
             } else {
-              const ids = notes.map(note => note.id);
+              const ids = notes.map((note) => note.id);
               await markNotesCompleted(ids);
-              textToSend = "Указанные заметки помечены как выполненные.";
+              textToSend = 'Указанные заметки помечены как выполненные.';
             }
           } else {
-            textToSend = "Не удалось определить, какие заметки обновить.";
+            textToSend = 'Не удалось определить, какие заметки обновить.';
           }
         } catch (err) {
-          console.error("Ошибка при обновлении заметок:", err);
-          textToSend = "Ошибка при обновлении заметок.";
+          console.error('Ошибка при обновлении заметок:', err);
+          textToSend = 'Ошибка при обновлении заметок.';
         }
       } else {
-        textToSend = "Неверный тип действия для заметки.";
+        textToSend = 'Неверный тип действия для заметки.';
       }
       break;
     }
-    case "show_events": {
+    case 'show_events': {
       try {
         let { date } = parsed;
         // Если GPT не указала дату, пытаемся определить через входной запрос
@@ -329,41 +365,45 @@ async function handleGPTResponse(reply, inputText, msg) {
         // Если во входном запросе явно указана дата (например, "на сегодня"), используем функцию для определения даты
         const expectedDate = expectedDateForUserInput(inputText);
         if (expectedDate && date !== expectedDate) {
-          console.log("Корректировка даты: ожидалось", expectedDate, "получено", date);
+          console.log('Корректировка даты: ожидалось', expectedDate, 'получено', date);
           date = expectedDate;
         }
         // Обновляем год для даты
         date = correctYear(date);
-    
+
         // Определяем начало и конец дня в часовом поясе Asia/Dubai
         const startOfDay = new Date(`${date}T00:00:00+04:00`);
         const endOfDay = new Date(`${date}T23:59:59+04:00`);
-    
+
         // Получаем события из Google Calendar за указанный период
         const events = await getEventsForPeriod(startOfDay, endOfDay);
-    
+
         if (events.length === 0) {
           textToSend = `На дату ${date} мероприятий не найдено.`;
         } else {
-          textToSend = `Мероприятия на ${date}:\n` + events.map(ev => {
-            const start = ev.start.dateTime || ev.start.date;
-            const end = ev.end.dateTime || ev.end.date;
-            return `${ev.summary} с ${formatTime(start)} до ${formatTime(end)}`;
-          }).join("\n");
+          textToSend =
+            `Мероприятия на ${date}:\n` +
+            events
+              .map((ev) => {
+                const start = ev.start.dateTime || ev.start.date;
+                const end = ev.end.dateTime || ev.end.date;
+                return `${ev.summary} с ${formatTime(start)} до ${formatTime(end)}`;
+              })
+              .join('\n');
         }
       } catch (err) {
-        console.error("Ошибка при получении мероприятий:", err);
-        textToSend = "Ошибка при получении мероприятий.";
+        console.error('Ошибка при получении мероприятий:', err);
+        textToSend = 'Ошибка при получении мероприятий.';
       }
       break;
     }
-    case "task": {
-      textToSend = "Создание задачи ещё не реализовано.";
+    case 'task': {
+      textToSend = 'Создание задачи ещё не реализовано.';
       break;
     }
-    case "chat":
+    case 'chat':
     default: {
-      textToSend = parsed.text || "Извините, я не смог сформировать ответ.";
+      textToSend = parsed.text || 'Извините, я не смог сформировать ответ.';
       break;
     }
   }
@@ -374,41 +414,42 @@ async function handleGPTResponse(reply, inputText, msg) {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   console.log(`Ваш chat_id: ${chatId}`);
-  
+
   if (!chatHistories[chatId]) {
     chatHistories[chatId] = [];
   }
-  
+
   // Если сообщение голосовое — обрабатываем его, затем как текстовое
   if (msg.voice) {
     try {
       await bot.sendMessage(chatId, 'Получено голосовое сообщение. Идет распознавание...');
       const fileId = msg.voice.file_id;
       const fileUrl = await bot.getFileLink(fileId);
-      
+
       // Скачиваем аудиофайл
       const response = await fetch(fileUrl);
       const oggArrayBuffer = await response.arrayBuffer();
       const oggBuffer = Buffer.from(oggArrayBuffer);
-      
+
       // Конвертируем OGG в WAV и распознаем речь через Yandex SpeechKit
       const wavBuffer = await convertOggToWav(oggBuffer);
       const transcription = await speechToTextYandex(wavBuffer);
-      
-      const transcriptionText = transcription && transcription.trim() !== ""
-                                  ? `Распознанный текст: ${transcription}`
-                                  : "Извините, распознавание речи не дало результата.";
+
+      const transcriptionText =
+        transcription && transcription.trim() !== ''
+          ? `Распознанный текст: ${transcription}`
+          : 'Извините, распознавание речи не дало результата.';
       await bot.sendMessage(chatId, transcriptionText);
-      
+
       // Добавляем распознанный текст в историю как сообщение пользователя
       chatHistories[chatId].push({ role: 'user', content: transcription });
-      
+
       // Обрабатываем распознанный текст так, как если бы он пришёл как текстовое сообщение
       const historyToSend = chatHistories[chatId].slice(-10);
       const reply = await processChatMessage(historyToSend);
-      console.log("[ChatGPT] Full reply:", reply);
+      console.log('[ChatGPT] Full reply:', reply);
       chatHistories[chatId].push(reply);
-      
+
       const resultText = await handleGPTResponse(reply, transcription, msg);
       await bot.sendMessage(chatId, resultText);
     } catch (error) {
@@ -417,14 +458,14 @@ bot.on('message', async (msg) => {
     }
     return;
   }
-  
+
   // Если сообщение текстовое
   if (msg.text) {
     chatHistories[chatId].push({ role: 'user', content: msg.text });
     const historyToSend = chatHistories[chatId].slice(-10);
     try {
       const reply = await processChatMessage(historyToSend);
-      console.log("[ChatGPT] Full reply:", reply);
+      console.log('[ChatGPT] Full reply:', reply);
       chatHistories[chatId].push(reply);
       const resultText = await handleGPTResponse(reply, msg.text, msg);
       await bot.sendMessage(chatId, resultText);
@@ -434,7 +475,7 @@ bot.on('message', async (msg) => {
     }
     return;
   }
-  
+
   // Если тип сообщения не поддерживается
   await bot.sendMessage(chatId, 'Тип сообщения не поддерживается для обработки.');
 });

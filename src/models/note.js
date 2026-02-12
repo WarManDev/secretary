@@ -9,27 +9,32 @@ export default (sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
+      user_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false, // КРИТИЧНО: заметки привязаны к пользователю
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+      },
       content: {
         type: DataTypes.TEXT,
         allowNull: false,
+      },
+      category: {
+        type: DataTypes.STRING(100),
+        allowNull: true,
       },
       completed: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: false,
       },
-      created_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
-      },
-      updated_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
-      },
     },
     {
       tableName: 'notes',
-      timestamps: false,
+      timestamps: true,
+      underscored: true,
     }
   );
 

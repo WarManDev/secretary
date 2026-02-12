@@ -33,6 +33,12 @@ const configSchema = z.object({
   // Yandex SpeechKit
   YANDEX_API_KEY: z.string().min(1, 'YANDEX_API_KEY обязателен'),
 
+  // JWT Authentication (этап 2)
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET должен быть минимум 32 символа'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET должен быть минимум 32 символа'),
+  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+
   // Token encryption (будущее - этап 2)
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
 
@@ -94,6 +100,13 @@ export default {
 
   yandex: {
     apiKey: config.YANDEX_API_KEY,
+  },
+
+  jwt: {
+    secret: config.JWT_SECRET,
+    refreshSecret: config.JWT_REFRESH_SECRET,
+    accessExpiresIn: config.JWT_ACCESS_EXPIRES_IN,
+    refreshExpiresIn: config.JWT_REFRESH_EXPIRES_IN,
   },
 
   encryption: {

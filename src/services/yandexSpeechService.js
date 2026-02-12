@@ -28,24 +28,24 @@ export async function convertOggToWav(oggBuffer) {
     try {
       // 1. Создаём поток для входных данных из oggBuffer
       const inputStream = new Readable({
-        read() {}
+        read() {},
       });
       inputStream.push(oggBuffer);
       inputStream.push(null); // сигнал конца данных
 
       // 2. Настраиваем ffmpeg для конвертации: вход — OGG, выход — WAV с PCM 16-bit
       const command = ffmpeg(inputStream)
-        .inputFormat("ogg")
-        .audioChannels(1)          // устанавливаем моно
-        .audioFrequency(22050)     // попробуйте повысить до 22050 Гц
-        .audioBitrate("64k")       // можно задать битрейт, если поддерживается
-        .audioCodec("pcm_s16le")
-        .format("wav")
-        .on("start", (cmdLine) => {
-          console.log("[ffmpeg] start command:", cmdLine);
+        .inputFormat('ogg')
+        .audioChannels(1) // устанавливаем моно
+        .audioFrequency(22050) // попробуйте повысить до 22050 Гц
+        .audioBitrate('64k') // можно задать битрейт, если поддерживается
+        .audioCodec('pcm_s16le')
+        .format('wav')
+        .on('start', (cmdLine) => {
+          console.log('[ffmpeg] start command:', cmdLine);
         })
-        .on("error", (err) => {
-          console.error("[ffmpeg] error:", err);
+        .on('error', (err) => {
+          console.error('[ffmpeg] error:', err);
           reject(err);
         });
 
@@ -53,18 +53,18 @@ export async function convertOggToWav(oggBuffer) {
       const outputStream = command.pipe();
 
       const chunks = [];
-      outputStream.on("data", (chunk) => {
+      outputStream.on('data', (chunk) => {
         chunks.push(chunk);
       });
 
-      outputStream.on("end", () => {
+      outputStream.on('end', () => {
         const wavBuffer = Buffer.concat(chunks);
-        console.log("[ffmpeg] end, wav size =", wavBuffer.length);
+        console.log('[ffmpeg] end, wav size =', wavBuffer.length);
         resolve(wavBuffer);
       });
 
-      outputStream.on("error", (err) => {
-        console.error("[ffmpeg] outputStream error:", err);
+      outputStream.on('error', (err) => {
+        console.error('[ffmpeg] outputStream error:', err);
         reject(err);
       });
     } catch (e) {
@@ -81,18 +81,18 @@ export async function convertOggToWav(oggBuffer) {
 export async function speechToTextYandex(wavBuffer) {
   try {
     const apiKey = config.yandex.apiKey; // API-ключ Яндекса из конфигурации
-    const url = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?lang=ru-RU&format=lpcm";
+    const url = 'https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?lang=ru-RU&format=lpcm';
 
     const response = await axios.post(url, wavBuffer, {
       headers: {
-        "Authorization": `Api-Key ${apiKey}`,
-        "Content-Type": "audio/wav"
-      }
+        Authorization: `Api-Key ${apiKey}`,
+        'Content-Type': 'audio/wav',
+      },
     });
 
-    return response.data.result || "";
+    return response.data.result || '';
   } catch (err) {
-    console.error("Yandex STT error:", err.response?.data || err.message);
-    return "";
+    console.error('Yandex STT error:', err.response?.data || err.message);
+    return '';
   }
 }

@@ -41,11 +41,19 @@ models.Employee.belongsTo(models.User, { foreignKey: 'user_id' });
 models.User.hasMany(models.Employee, { foreignKey: 'user_id' });
 
 // Задачи
-models.Task.belongsTo(models.Employee, { foreignKey: 'assigned_employee_id' });
+models.Task.belongsTo(models.Employee, {
+  foreignKey: 'assigned_employee_id',
+  as: 'assigned_employee',
+});
 models.Task.belongsTo(models.User, { foreignKey: 'created_by' });
 
 // События (встречи)
-models.Event.belongsTo(models.User, { foreignKey: 'created_by' });
+models.Event.belongsTo(models.User, { foreignKey: 'user_id' });
+models.User.hasMany(models.Event, { foreignKey: 'user_id' });
+
+// Заметки
+models.Note.belongsTo(models.User, { foreignKey: 'user_id' });
+models.User.hasMany(models.Note, { foreignKey: 'user_id' });
 
 // Сессии
 models.Session.belongsTo(models.User, { foreignKey: 'user_id' });

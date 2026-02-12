@@ -16,7 +16,7 @@ export async function createNote(noteData) {
 export async function getPendingNotes() {
   return await models.Note.findAll({
     where: { completed: false },
-    order: [['created_at', 'ASC']]
+    order: [['created_at', 'ASC']],
   });
 }
 
@@ -26,8 +26,5 @@ export async function getPendingNotes() {
  * @returns {Promise<void>}
  */
 export async function markNotesCompleted(noteIds) {
-  await models.Note.update(
-    { completed: true },
-    { where: { id: noteIds } }
-  );
+  await models.Note.update({ completed: true }, { where: { id: noteIds } });
 }

@@ -9,12 +9,21 @@ export default (sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
+      user_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+      },
       title: {
-        type: DataTypes.STRING,
+        type: DataTypes.STRING(200),
         allowNull: false,
       },
       description: {
         type: DataTypes.TEXT,
+        allowNull: true,
       },
       event_date: {
         type: DataTypes.DATE,
@@ -25,20 +34,27 @@ export default (sequelize) => {
         allowNull: false,
       },
       google_calendar_event_id: {
-        type: DataTypes.STRING,
+        type: DataTypes.STRING(255),
+        allowNull: true,
       },
-      created_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
+      recurrence_rule: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
       },
-      updated_at: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW,
+      reminder_minutes: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 15,
+      },
+      created_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
       },
     },
     {
       tableName: 'events',
-      timestamps: false,
+      timestamps: true,
+      underscored: true,
     }
   );
 

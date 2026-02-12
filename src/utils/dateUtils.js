@@ -3,13 +3,13 @@ import moment from 'moment-timezone';
 export function expectedDateForUserInput(userText) {
   const lowerText = userText.toLowerCase();
   const today = new Date();
-  if (lowerText.includes("сегодня") || lowerText.includes("на сегодня")) {
+  if (lowerText.includes('сегодня') || lowerText.includes('на сегодня')) {
     return today.toISOString().split('T')[0];
-  } else if (lowerText.includes("послезавтра")) {
+  } else if (lowerText.includes('послезавтра')) {
     const date = new Date(today);
     date.setDate(date.getDate() + 2);
     return date.toISOString().split('T')[0];
-  } else if (lowerText.includes("завтра")) {
+  } else if (lowerText.includes('завтра')) {
     const date = new Date(today);
     date.setDate(date.getDate() + 1);
     return date.toISOString().split('T')[0];
@@ -24,9 +24,9 @@ export function expectedDateForUserInput(userText) {
 export function correctYear(dateStr) {
   dateStr = dateStr.trim();
   const currentYear = new Date().getFullYear();
-  const parts = dateStr.split("-").map(p => p.trim());
+  const parts = dateStr.split('-').map((p) => p.trim());
   if (parts.length !== 3) {
-    throw new Error("Неверный формат даты: " + dateStr);
+    throw new Error('Неверный формат даты: ' + dateStr);
   }
   const [year, month, day] = parts;
   if (parseInt(year) < currentYear) {
@@ -62,7 +62,7 @@ export function computeEndDateTime(dateStr, timeStr) {
   dateStr = correctYear(dateStr);
   const start = new Date(`${dateStr}T${timeStr}:00`);
   if (isNaN(start.getTime())) {
-    throw new Error("Некорректная дата или время для начала встречи.");
+    throw new Error('Некорректная дата или время для начала встречи.');
   }
   const end = new Date(start.getTime() + 60 * 60 * 1000); // добавляем 1 час
   return formatLocalDate(end);
@@ -77,10 +77,10 @@ export function extractEndTime(text) {
   const match = text.match(regex);
   if (match) {
     let hour = match[1];
-    let minute = match[2] || "00";
+    let minute = match[2] || '00';
     // Добавляем ведущий ноль, если необходимо
-    if (hour.length === 1) hour = "0" + hour;
-    if (minute.length === 1) minute = "0" + minute;
+    if (hour.length === 1) hour = '0' + hour;
+    if (minute.length === 1) minute = '0' + minute;
     return `${hour}:${minute}`;
   }
   return null;
@@ -93,7 +93,7 @@ export function extractEndTime(text) {
  * @returns {Date}
  */
 export function getLocalDateTime(dateStr, timeStr) {
-  return moment.tz(`${dateStr}T${timeStr}:00`, "Asia/Dubai").toDate();
+  return moment.tz(`${dateStr}T${timeStr}:00`, 'Asia/Dubai').toDate();
 }
 
 export function nextDay(dateStr) {

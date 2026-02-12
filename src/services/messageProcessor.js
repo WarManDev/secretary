@@ -1,4 +1,5 @@
 import sessionManager from './sessionManager.js';
+import claudeService from './claudeService.js';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
 
@@ -67,32 +68,148 @@ class MessageProcessor {
 
   /**
    * Определить намерение и выполнить действие
-   * TODO: Интеграция с Claude API (Stage 4)
+   * Использует Claude AI для понимания запросов
    */
   async detectIntentAndAct(messageText, history, userId) {
-    // Заглушка - будет заменена на Claude API в Stage 4
-    const lowerText = messageText.toLowerCase();
+    try {
+      // 1. Отправляем сообщение в Claude AI
+      const aiResponse = await claudeService.sendMessage(messageText, history);
 
-    // Простое определение намерения (пока без AI)
-    let intent = 'chat';
-    let response =
-      'Функционал AI находится в разработке (Stage 4). Пока доступны только REST API endpoints.';
-    let toolCalls = null;
+      const { intent, response, data, modelUsed } = aiResponse;
 
-    // Простые команды для теста
-    if (lowerText.includes('создай заметку') || lowerText.includes('запиши')) {
-      intent = 'create_note';
-      // Пока заглушка - в Stage 4 будет работать через Claude
-      response = 'Используйте POST /api/notes для создания заметок через API';
-    } else if (lowerText.includes('события') || lowerText.includes('календарь')) {
-      intent = 'show_events';
-      response = 'Используйте GET /api/events для просмотра событий через API';
-    } else if (lowerText.includes('задачи') || lowerText.includes('todo')) {
-      intent = 'show_tasks';
-      response = 'Используйте GET /api/tasks для просмотра задач через API';
+      logger.info(`AI: intent=${intent}, model=${modelUsed}`);
+
+      // 2. Выполняем действие в зависимости от намерения
+      let toolCalls = null;
+
+      switch (intent) {
+        case 'create_note':
+          toolCalls = await this.executeCreateNote(userId, data);
+          break;
+
+        case 'create_task':
+          toolCalls = await this.executeCreateTask(userId, data);
+          break;
+
+        case 'create_event':
+          toolCalls = await this.executeCreateEvent(userId, data);
+          break;
+
+        case 'search':
+        case 'list':
+          // TODO: реализовать поиск/список (Stage 5)
+          break;
+
+        case 'chat':
+        case 'help':
+        default:
+          // Просто разговор, ничего не делаем
+          break;
+      }
+
+      return { intent, response, toolCalls };
+    } catch (error) {
+      logger.error('Ошибка detectIntentAndAct:', error);
+
+      // Fallback на простой ответ
+      return {
+        intent: 'error',
+        response: 'Извините, произошла ошибка. Попробуйте ещё раз.',
+        toolCalls: null,
+      };
+    }
+  }
+
+  /**
+   * Создать заметку
+   */
+  async executeCreateNote(userId, data) {
+    if (!data?.content) {
+      logger.warn('executeCreateNote: нет content в data');
+      return null;
     }
 
-    return { intent, response, toolCalls };
+    try {
+      const note = await models.Note.create({
+        user_id: userId,
+        content: data.content,
+        category: data.category || 'general',
+        completed: false,
+      });
+
+      logger.info(`Создана заметка: id=${note.id}, user=${userId}`);
+
+      return {
+        action: 'create_note',
+        result: { note_id: note.id },
+      };
+    } catch (error) {
+      logger.error('Ошибка создания заметки:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Создать задачу
+   */
+  async executeCreateTask(userId, data) {
+    if (!data?.title) {
+      logger.warn('executeCreateTask: нет title в data');
+      return null;
+    }
+
+    try {
+      const task = await models.Task.create({
+        created_by: userId,
+        title: data.title,
+        description: data.description || null,
+        priority: data.priority || 'medium',
+        status: 'pending',
+        due_date: data.due_date || null,
+        tags: data.tags || [],
+      });
+
+      logger.info(`Создана задача: id=${task.id}, user=${userId}`);
+
+      return {
+        action: 'create_task',
+        result: { task_id: task.id },
+      };
+    } catch (error) {
+      logger.error('Ошибка создания задачи:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Создать событие
+   */
+  async executeCreateEvent(userId, data) {
+    if (!data?.title || !data?.event_date) {
+      logger.warn('executeCreateEvent: нет title или event_date в data');
+      return null;
+    }
+
+    try {
+      const event = await models.Event.create({
+        user_id: userId,
+        title: data.title,
+        description: data.description || null,
+        event_date: new Date(data.event_date),
+        end_date: data.end_date ? new Date(data.end_date) : null,
+        reminder_minutes: data.reminder_minutes || 15,
+      });
+
+      logger.info(`Создано событие: id=${event.id}, user=${userId}`);
+
+      return {
+        action: 'create_event',
+        result: { event_id: event.id },
+      };
+    } catch (error) {
+      logger.error('Ошибка создания события:', error);
+      return null;
+    }
   }
 
   /**

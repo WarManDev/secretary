@@ -21,6 +21,7 @@
   "type": "module",
   "description": "",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "axios": "^1.7.9",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",

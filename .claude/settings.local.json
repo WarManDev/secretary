@@ -28,7 +28,9 @@
       "Bash(__NEW_LINE_060c1183fc52c738__ echo \"2. Create Event \\(с end_date\\):\")",
       "Bash(__NEW_LINE_060c1183fc52c738__ echo \"3. Get Events \\(date range без времени - теперь принимается\\):\")",
       "Bash(__NEW_LINE_060c1183fc52c738__ echo \"4. Get All Events \\(с пагинацией\\):\")",
-      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"=== ТЕСТ ЗАВЕРШЁН ===\")"
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"=== ТЕСТ ЗАВЕРШЁН ===\")",
+      "Bash(git reset:*)",
+      "Bash(git push:*)"
     ]
   }
 }

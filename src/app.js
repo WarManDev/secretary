@@ -79,11 +79,20 @@ app.get('/api/health', async (req, res) => {
     const { sequelize } = await import('./models/index.js');
     await sequelize.authenticate();
 
+    // Проверяем Claude AI (без реального API вызова)
+    const { default: claudeService } = await import('./services/claudeService.js');
+    const claudeStatus = claudeService.client ? 'configured' : 'no_api_key';
+
     res.json({
       status: 'OK',
       timestamp: new Date(),
       environment: config.env,
       database: 'connected',
+      ai: {
+        provider: 'anthropic_claude',
+        status: claudeStatus,
+        models: claudeService.models,
+      },
     });
   } catch (error) {
     res.status(503).json({

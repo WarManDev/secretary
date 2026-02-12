@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  parser:
+    image: postgres:16
+    container_name: secretary_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: secretary_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - secretary_db:/var/lib/postgresql/data
+
+volumes:
+  secretary_db:

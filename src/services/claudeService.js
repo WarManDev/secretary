@@ -123,7 +123,7 @@ class ClaudeService {
    * Основной метод: отправка сообщения в Claude
    *
    * @param {string} userMessage - сообщение пользователя
-   * @param {Array} history - история диалога (для контекста)
+   * @param {Array|Object} history - история диалога или объект с messages + cacheBreakpoint
    * @param {Object} options - дополнительные опции
    * @returns {Object} { intent, response, data, modelUsed, tokensUsed }
    */
@@ -135,17 +135,34 @@ class ClaudeService {
     }
 
     try {
-      // Выбираем модель (Haiku или Sonnet)
-      const model = options.forceModel || this._selectModel(userMessage, history);
+      // Распаковываем history (может быть массив или объект с cacheBreakpoint)
+      let messages = [];
+      let cacheBreakpoint = null;
 
-      logger.info(`Claude API: используем ${model === this.models.haiku ? 'Haiku' : 'Sonnet'}`);
+      if (Array.isArray(history)) {
+        // Старый формат - простой массив
+        messages = this._formatHistory(history);
+      } else if (history.messages) {
+        // Новый формат - объект с messages и cacheBreakpoint
+        messages = this._formatHistory(history.messages);
+        cacheBreakpoint = history.cacheBreakpoint;
+      }
 
-      // Форматируем историю для Claude
-      const messages = this._formatHistory(history);
+      // Добавляем cache_control на breakpoint (если есть)
+      if (cacheBreakpoint !== null && messages[cacheBreakpoint]) {
+        messages[cacheBreakpoint].cache_control = { type: 'ephemeral' };
+      }
+
+      // Добавляем текущее сообщение
       messages.push({
         role: 'user',
         content: userMessage,
       });
+
+      // Выбираем модель (Haiku или Sonnet)
+      const model = options.forceModel || this._selectModel(userMessage, messages);
+
+      logger.info(`Claude API: используем ${model === this.models.haiku ? 'Haiku' : 'Sonnet'}`);
 
       // Отправляем запрос в Claude
       const response = await this.client.messages.create({

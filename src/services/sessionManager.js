@@ -75,6 +75,7 @@ class SessionManager {
 
   /**
    * Получить историю в формате для AI (Claude/GPT)
+   * DEPRECATED: используйте getHistoryWithSummary для оптимизации
    */
   async getHistoryForAI(sessionId, limit = 20) {
     const messages = await this.getSessionHistory(sessionId, limit);
@@ -84,6 +85,136 @@ class SessionManager {
       role: msg.sender === 'user' ? 'user' : 'assistant',
       content: msg.message_text,
     }));
+  }
+
+  /**
+   * Получить историю с оптимизацией (summary + последние сообщения)
+   *
+   * Логика:
+   * - Если <= 10 сообщений: отправить все
+   * - Если 11-30 сообщений: отправить последние 10 + prompt cache
+   * - Если > 30 сообщений: summary + последние 10
+   */
+  async getHistoryWithSummary(sessionId, recentLimit = 10) {
+    const allMessages = await this.getSessionHistory(sessionId, 100); // Берём больше для анализа
+    const totalCount = allMessages.length;
+
+    // Если мало сообщений - отправляем все
+    if (totalCount <= recentLimit) {
+      return {
+        messages: allMessages.map((msg) => ({
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: msg.message_text,
+        })),
+        hasSummary: false,
+        shouldCreateSummary: false,
+      };
+    }
+
+    // Если средне (11-30) - отправляем последние N
+    if (totalCount <= 30) {
+      const recentMessages = allMessages.slice(-recentLimit);
+      const olderMessages = allMessages.slice(0, -recentLimit);
+
+      return {
+        messages: [
+          // Старые сообщения (будут закэшированы)
+          ...olderMessages.map((msg) => ({
+            role: msg.sender === 'user' ? 'user' : 'assistant',
+            content: msg.message_text,
+          })),
+          // Последние сообщения (не в кэше)
+          ...recentMessages.map((msg) => ({
+            role: msg.sender === 'user' ? 'user' : 'assistant',
+            content: msg.message_text,
+          })),
+        ],
+        cacheBreakpoint: olderMessages.length > 0 ? olderMessages.length - 1 : null,
+        hasSummary: false,
+        shouldCreateSummary: false,
+      };
+    }
+
+    // Если много (>30) - используем summary
+    const session = await models.Session.findByPk(sessionId);
+    const recentMessages = allMessages.slice(-recentLimit);
+
+    let summaryMessage = null;
+    let shouldCreateSummary = false;
+
+    if (session?.current_summary) {
+      // Есть summary - используем его
+      summaryMessage = {
+        role: 'user',
+        content: `[КОНТЕКСТ ДИАЛОГА]\n${session.current_summary}\n[КОНЕЦ КОНТЕКСТА]`,
+      };
+    } else {
+      // Нет summary - нужно создать
+      shouldCreateSummary = true;
+      // Временно отправляем первые 10 как есть
+      const oldMessages = allMessages.slice(0, 20);
+      summaryMessage = {
+        role: 'user',
+        content: `[РАННИЕ СООБЩЕНИЯ]\n${oldMessages.map((m) => `${m.sender}: ${m.message_text}`).join('\n')}\n[КОНЕЦ РАННИХ СООБЩЕНИЙ]`,
+      };
+    }
+
+    return {
+      messages: [
+        summaryMessage,
+        ...recentMessages.map((msg) => ({
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: msg.message_text,
+        })),
+      ],
+      cacheBreakpoint: 0, // Кэшируем summary
+      hasSummary: !!session?.current_summary,
+      shouldCreateSummary,
+    };
+  }
+
+  /**
+   * Создать summary через Claude AI
+   */
+  async generateSummary(sessionId) {
+    const messages = await this.getSessionHistory(sessionId, 100);
+
+    if (messages.length < 10) {
+      logger.warn(`Сессия ${sessionId} слишком короткая для summary (${messages.length} сообщений)`);
+      return null;
+    }
+
+    // Берём первые 20-30 сообщений для summary
+    const messagesToSummarize = messages.slice(0, Math.min(30, messages.length - 10));
+
+    // Формируем промпт для summarization
+    const conversationText = messagesToSummarize
+      .map((msg) => `${msg.sender === 'user' ? 'Пользователь' : 'Ассистент'}: ${msg.message_text}`)
+      .join('\n');
+
+    const summaryPrompt = `Создай краткую сводку следующего диалога (3-5 предложений). Укажи ключевые темы, созданные заметки/задачи/события, важные детали:
+
+${conversationText}
+
+Сводка:`;
+
+    try {
+      // Используем Haiku для экономии (summarization не требует Sonnet)
+      const claudeService = (await import('./claudeService.js')).default;
+      const result = await claudeService.sendMessage(summaryPrompt, [], { forceModel: claudeService.models.haiku });
+
+      const summaryText = result.response;
+
+      // Сохраняем summary
+      await this.createSummary(sessionId, summaryText);
+
+      logger.info(`Summary создан для сессии ${sessionId}: ${summaryText.substring(0, 50)}...`);
+
+      return summaryText;
+    } catch (error) {
+      logger.error(`Ошибка создания summary для сессии ${sessionId}:`, error);
+      return null;
+    }
   }
 
   /**

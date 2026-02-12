@@ -32,13 +32,21 @@ class MessageProcessor {
       // 2. Сохраняем сообщение пользователя
       await sessionManager.addMessage(session.id, 'user', messageText, messageType);
 
-      // 3. Загружаем контекст (история диалога)
-      const history = await sessionManager.getHistoryForAI(session.id);
+      // 3. Загружаем контекст (с оптимизацией: summary + последние сообщения)
+      const historyData = await sessionManager.getHistoryWithSummary(session.id, 10);
 
-      // 4. Определяем намерение и выполняем действие
+      // 4. Если нужно создать summary - создаём асинхронно (не блокируем ответ)
+      if (historyData.shouldCreateSummary) {
+        // Создаём summary в фоне (не ждём завершения)
+        sessionManager.generateSummary(session.id).catch((err) => {
+          logger.error(`Ошибка фонового создания summary для сессии ${session.id}:`, err);
+        });
+      }
+
+      // 5. Определяем намерение и выполняем действие
       const { intent, response, toolCalls } = await this.detectIntentAndAct(
         messageText,
-        history,
+        historyData,
         userId
       );
 

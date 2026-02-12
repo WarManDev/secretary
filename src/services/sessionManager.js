@@ -1,4 +1,5 @@
 import models from '../models/index.js';
+import { Op } from 'sequelize';
 import logger from '../config/logger.js';
 
 /**
@@ -131,7 +132,7 @@ class SessionManager {
     const result = await models.Session.destroy({
       where: {
         ended_at: {
-          [models.Sequelize.Op.lt]: cutoffDate,
+          [Op.lt]: cutoffDate,
         },
       },
     });

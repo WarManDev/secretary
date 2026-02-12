@@ -178,9 +178,10 @@ export const eventSchemas = {
       title: z.string().min(1, 'Название события обязательно').max(200),
       description: z.string().optional(),
       event_date: z.string().datetime('Неверный формат даты'),
-      end_date: z.string().datetime('Неверный формат даты'),
+      end_date: z.string().datetime('Неверный формат даты').optional(), // Опциональная дата окончания
       recurrence_rule: z.string().optional(),
       reminder_minutes: z.number().int().min(0).optional().default(15),
+      // location будет добавлен в Stage 6 (миграция БД)
     }),
   },
 
@@ -200,8 +201,8 @@ export const eventSchemas = {
   // GET /api/events
   list: {
     query: paginationSchema.merge(sortSchema).extend({
-      start_date: z.string().datetime().optional(),
-      end_date: z.string().datetime().optional(),
+      start_date: z.string().optional(), // Принимаем любой формат даты
+      end_date: z.string().optional(), // Принимаем любой формат даты
     }),
   },
 };

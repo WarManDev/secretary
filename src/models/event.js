@@ -31,7 +31,7 @@ export default (sequelize) => {
       },
       end_date: {
         type: DataTypes.DATE,
-        allowNull: false,
+        allowNull: true, // Дата окончания опциональна
       },
       google_calendar_event_id: {
         type: DataTypes.STRING(255),

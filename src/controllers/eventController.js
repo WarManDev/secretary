@@ -69,7 +69,7 @@ export const createEvent = asyncHandler(async (req, res) => {
     title,
     description,
     event_date: new Date(event_date),
-    end_date: new Date(end_date),
+    end_date: end_date ? new Date(end_date) : null, // Опционально
     recurrence_rule,
     reminder_minutes: reminder_minutes || 15,
   });
@@ -99,7 +99,7 @@ export const updateEvent = asyncHandler(async (req, res) => {
     ...(title !== undefined && { title }),
     ...(description !== undefined && { description }),
     ...(event_date !== undefined && { event_date: new Date(event_date) }),
-    ...(end_date !== undefined && { end_date: new Date(end_date) }),
+    ...(end_date !== undefined && { end_date: end_date ? new Date(end_date) : null }),
     ...(recurrence_rule !== undefined && { recurrence_rule }),
     ...(reminder_minutes !== undefined && { reminder_minutes }),
   });

@@ -8,7 +8,27 @@
       "Bash(npm run format:*)",
       "Bash(npm run lint:*)",
       "Bash(npm run lint:fix:*)",
-      "Bash(timeout 10 npm start:*)"
+      "Bash(timeout 10 npm start:*)",
+      "Bash(npm run db:migrate:*)",
+      "Bash(psql:*)",
+      "Bash(npx sequelize-cli:*)",
+      "Bash(npm run db:seed:*)",
+      "Bash(npm run dev:*)",
+      "Bash(node -e:*)",
+      "Bash(\"d:/WarManDev/secretary/.env\" << 'EOF'\n\n# JWT Authentication \\(Stage 2\\)\nJWT_SECRET=825baf308e804909720fe03362e89970d825aa2c469d361c0df42f14a3643d54\nJWT_REFRESH_SECRET=20fc41d1c6ca141dba62c9be7575e8d27ba5c0d8ef9cc44ccafedd79cf0da1d9\nJWT_ACCESS_EXPIRES_IN=15m\nJWT_REFRESH_EXPIRES_IN=30d\nEOF)",
+      "Bash(npx kill-port:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(npm start)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJhZG1pbiIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3NzA5MTgxMzEsImV4cCI6MTc3MDkxOTAzMSwiaXNzIjoic2VjcmV0YXJ5LWJvdCJ9.xumtjtWVaWxKCkm1q3vKTxG1iY4SjarSv1ZxAesqdNI\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"=== ТЕСТ EVENTS API \\(ПОСЛЕ ИСПРАВЛЕНИЯ\\) ===\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"1. Create Event \\(без end_date - теперь опционально\\):\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"2. Create Event \\(с end_date\\):\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"3. Get Events \\(date range без времени - теперь принимается\\):\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"4. Get All Events \\(с пагинацией\\):\")",
+      "Bash(__NEW_LINE_060c1183fc52c738__ echo \"=== ТЕСТ ЗАВЕРШЁН ===\")"
     ]
   }
 }

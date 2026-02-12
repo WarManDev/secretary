@@ -87,6 +87,11 @@ const handleJWTError = (error) => {
  * Глобальный обработчик ошибок
  */
 const errorHandler = (err, req, res, next) => {
+  // Защита от null/undefined errors
+  if (!err) {
+    err = new Error('Неизвестная ошибка');
+  }
+
   let error = { ...err };
   error.message = err.message;
   error.stack = err.stack;

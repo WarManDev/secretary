@@ -13,8 +13,13 @@ async function connectDatabase() {
     await sequelize.authenticate();
     logger.info('✓ База данных: подключение успешно установлено');
 
-    // Схема БД управляется через миграции (npx sequelize-cli db:migrate)
-    // sequelize.sync() больше не используется
+    // ВРЕМЕННО: Sync для development чтобы применить изменения модели Event (end_date allowNull)
+    // TODO: В Stage 1 перейти полностью на миграции
+    if (config.isDevelopment) {
+      await sequelize.sync({ alter: true });
+      logger.info('✓ База данных: схема синхронизирована (alter mode)');
+    }
+
     logger.info('✓ База данных: готова к работе (используйте миграции для изменения схемы)');
   } catch (error) {
     logger.error('✗ База данных: ошибка подключения:', error);

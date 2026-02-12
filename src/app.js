@@ -12,6 +12,7 @@ import userRouter from './routes/userRouter.js';
 import noteRouter from './routes/noteRouter.js';
 import eventRouter from './routes/eventRouter.js';
 import taskRouter from './routes/taskRouter.js';
+import chatRouter from './routes/chatRouter.js';
 
 // Middleware
 import { authenticate } from './middleware/auth.js';
@@ -75,7 +76,8 @@ if (config.isDevelopment) {
 app.get('/api/health', async (req, res) => {
   try {
     // Проверяем подключение к БД
-    await models.sequelize.authenticate();
+    const { sequelize } = await import('./models/index.js');
+    await sequelize.authenticate();
 
     res.json({
       status: 'OK',
@@ -105,6 +107,7 @@ app.use('/api/users', authenticate, userRouter);
 app.use('/api/notes', authenticate, noteRouter);
 app.use('/api/events', authenticate, eventRouter);
 app.use('/api/tasks', authenticate, taskRouter);
+app.use('/api/chat', authenticate, chatRouter);
 
 // -------------------------
 // Error Handling

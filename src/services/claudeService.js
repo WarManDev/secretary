@@ -148,9 +148,12 @@ class ClaudeService {
         cacheBreakpoint = history.cacheBreakpoint;
       }
 
-      // Добавляем cache_control на breakpoint (если есть)
+      // Добавляем cache_control на breakpoint (должен быть на content block, не на message)
       if (cacheBreakpoint !== null && messages[cacheBreakpoint]) {
-        messages[cacheBreakpoint].cache_control = { type: 'ephemeral' };
+        const msg = messages[cacheBreakpoint];
+        if (typeof msg.content === 'string') {
+          msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }];
+        }
       }
 
       // Добавляем текущее сообщение
@@ -202,7 +205,7 @@ class ClaudeService {
    */
   _formatHistory(history) {
     return history.map((msg) => ({
-      role: msg.role === 'bot' ? 'assistant' : 'user',
+      role: msg.role === 'user' ? 'user' : 'assistant',
       content: msg.content,
     }));
   }
@@ -214,16 +217,41 @@ class ClaudeService {
     const content = response.content[0].text;
 
     try {
-      // Пытаемся распарсить JSON
-      const parsed = JSON.parse(content);
+      // Способ 1: извлекаем JSON из markdown блока ```json ... ```
+      const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (codeBlockMatch) {
+        const parsed = JSON.parse(codeBlockMatch[1].trim());
+        return {
+          intent: parsed.intent || 'chat',
+          response: parsed.response || content,
+          data: parsed.data || null,
+        };
+      }
 
+      // Способ 2: весь ответ — чистый JSON
+      const parsed = JSON.parse(content.trim());
       return {
         intent: parsed.intent || 'chat',
         response: parsed.response || content,
         data: parsed.data || null,
       };
     } catch (error) {
-      // Если не JSON, возвращаем как обычный текст
+      // Способ 3: ищем JSON объект внутри текста
+      const jsonMatch = content.match(/\{[\s\S]*"intent"[\s\S]*"response"[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return {
+            intent: parsed.intent || 'chat',
+            response: parsed.response || content,
+            data: parsed.data || null,
+          };
+        } catch (e) {
+          // JSON невалидный, возвращаем как текст
+        }
+      }
+
+      // Fallback: не JSON, возвращаем как обычный текст
       return {
         intent: 'chat',
         response: content,

@@ -3,7 +3,7 @@ import config from '../config/index.js';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
 import messageProcessor from './messageProcessor.js';
-import { convertOggToWav, speechToTextYandex } from './yandexSpeechService.js';
+import { speechToTextYandex } from './yandexSpeechService.js';
 
 /**
  * Telegram Bot Integration
@@ -41,10 +41,8 @@ async function getOrCreateUser(telegramUser) {
       username: username || `user_${telegramId}`,
       email: null, // Telegram не даёт email
       password_hash: null, // Для Telegram пользователей не нужен
-      role: 'user',
+      role: 'employee', // Допустимые значения: 'admin', 'boss', 'employee'
       subscription_tier: 'free',
-      credits_balance: 50, // Даём 50 бесплатных сообщений
-      credits_used_today: 0,
     });
 
     logger.info(`Новый пользователь зарегистрирован: telegram_id=${telegramId}, user_id=${user.id}`);
@@ -73,18 +71,8 @@ async function handleTextMessage(msg) {
     // Получаем или создаём пользователя
     const user = await getOrCreateUser(msg.from);
 
-    // Проверяем кредиты (если не admin)
-    if (user.role !== 'admin') {
-      const dailyLimit = user.subscription_tier === 'free' ? 50 : 500;
-
-      if (user.credits_used_today >= dailyLimit) {
-        await bot.sendMessage(
-          chatId,
-          `⚠️ Вы достигли дневного лимита сообщений (${dailyLimit}).\n\nОбновите подписку для увеличения лимита.`
-        );
-        return;
-      }
-    }
+    // TODO: Проверка кредитов будет добавлена в Stage 8 (Monetization)
+    // Сейчас credits_used_today и credits_balance отсутствуют в модели User
 
     // Обрабатываем через MessageProcessor
     const result = await messageProcessor.processMessage({
@@ -98,11 +86,6 @@ async function handleTextMessage(msg) {
         username: msg.from.username,
       },
     });
-
-    // Увеличиваем счётчик использованных кредитов
-    if (user.role !== 'admin') {
-      await user.increment('credits_used_today');
-    }
 
     // Отправляем ответ
     await bot.sendMessage(chatId, result.response);
@@ -124,22 +107,11 @@ async function handleVoiceMessage(msg) {
     // Получаем или создаём пользователя
     const user = await getOrCreateUser(msg.from);
 
-    // Проверяем кредиты
-    if (user.role !== 'admin') {
-      const dailyLimit = user.subscription_tier === 'free' ? 50 : 500;
-
-      if (user.credits_used_today >= dailyLimit) {
-        await bot.sendMessage(
-          chatId,
-          `⚠️ Вы достигли дневного лимита сообщений (${dailyLimit}).\n\nОбновите подписку для увеличения лимита.`
-        );
-        return;
-      }
-    }
+    // TODO: Проверка кредитов будет добавлена в Stage 8 (Monetization)
 
     await bot.sendMessage(chatId, '🎤 Распознаю голос...');
 
-    // Скачиваем голосовое сообщение
+    // Скачиваем голосовое сообщение (Telegram отправляет в OGG/Opus)
     const fileId = msg.voice.file_id;
     const fileUrl = await bot.getFileLink(fileId);
 
@@ -147,11 +119,8 @@ async function handleVoiceMessage(msg) {
     const oggArrayBuffer = await response.arrayBuffer();
     const oggBuffer = Buffer.from(oggArrayBuffer);
 
-    // Конвертируем OGG → WAV
-    const wavBuffer = await convertOggToWav(oggBuffer);
-
-    // Транскрибируем через Yandex SpeechKit
-    const transcription = await speechToTextYandex(wavBuffer);
+    // Отправляем OGG напрямую в Yandex (без конвертации — сохраняем качество)
+    const transcription = await speechToTextYandex(oggBuffer, 'oggopus');
 
     if (!transcription || transcription.trim() === '') {
       await bot.sendMessage(chatId, '❌ Не удалось распознать речь. Попробуйте ещё раз.');
@@ -174,10 +143,7 @@ async function handleVoiceMessage(msg) {
       },
     });
 
-    // Увеличиваем счётчик использованных кредитов
-    if (user.role !== 'admin') {
-      await user.increment('credits_used_today');
-    }
+    // TODO: Увеличение кредитов будет добавлено в Stage 8 (Monetization)
 
     // Отправляем ответ
     await bot.sendMessage(chatId, result.response);

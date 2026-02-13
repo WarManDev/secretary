@@ -74,25 +74,30 @@ export async function convertOggToWav(oggBuffer) {
 }
 
 /**
- * speechToTextYandex – отправляет WAV-аудиоданные в API Яндекса для распознавания речи.
- * @param {Buffer} wavBuffer - буфер с аудиоданными в формате WAV.
+ * speechToTextYandex – отправляет аудиоданные в API Яндекса для распознавания речи.
+ * Поддерживает OGG/Opus (нативный формат Telegram) и WAV.
+ *
+ * @param {Buffer} audioBuffer - буфер с аудиоданными.
+ * @param {string} format - формат аудио: 'oggopus' (по умолчанию) или 'lpcm'
  * @returns {Promise<string>} - промис, который резолвится в распознанный текст.
  */
-export async function speechToTextYandex(wavBuffer) {
+export async function speechToTextYandex(audioBuffer, format = 'oggopus') {
   try {
-    const apiKey = config.yandex.apiKey; // API-ключ Яндекса из конфигурации
-    const url = 'https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?lang=ru-RU&format=lpcm';
+    const apiKey = config.yandex.apiKey;
+    const url = `https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?lang=ru-RU&format=${format}`;
 
-    const response = await axios.post(url, wavBuffer, {
+    const contentType = format === 'oggopus' ? 'audio/ogg' : 'audio/wav';
+
+    const response = await axios.post(url, audioBuffer, {
       headers: {
         Authorization: `Api-Key ${apiKey}`,
-        'Content-Type': 'audio/wav',
+        'Content-Type': contentType,
       },
     });
 
     return response.data.result || '';
   } catch (err) {
-    console.error('Yandex STT error:', err.response?.data || err.message);
+    logger.error('Yandex STT error:', err.response?.data || err.message);
     return '';
   }
 }

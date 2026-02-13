@@ -29,11 +29,11 @@ class MessageProcessor {
       // 1. Получаем или создаём сессию
       const session = await sessionManager.getOrCreateSession(userId, platform, metadata);
 
-      // 2. Сохраняем сообщение пользователя
-      await sessionManager.addMessage(session.id, 'user', messageText, messageType);
-
-      // 3. Загружаем контекст (с оптимизацией: summary + последние сообщения)
+      // 2. Загружаем контекст ПЕРЕД сохранением (иначе текущее сообщение дублируется)
       const historyData = await sessionManager.getHistoryWithSummary(session.id, 10);
+
+      // 3. Сохраняем сообщение пользователя в БД
+      await sessionManager.addMessage(session.id, 'user', messageText, messageType);
 
       // 4. Если нужно создать summary - создаём асинхронно (не блокируем ответ)
       if (historyData.shouldCreateSummary) {
@@ -132,15 +132,17 @@ class MessageProcessor {
    * Создать заметку
    */
   async executeCreateNote(userId, data) {
-    if (!data?.content) {
-      logger.warn('executeCreateNote: нет content в data');
+    // Claude может вернуть content, title+description, или просто title
+    const content = data?.content || data?.description || data?.title;
+    if (!content) {
+      logger.warn('executeCreateNote: нет content/title/description в data');
       return null;
     }
 
     try {
       const note = await models.Note.create({
         user_id: userId,
-        content: data.content,
+        content: data.title ? `${data.title}: ${data.description || ''}`.trim() : content,
         category: data.category || 'general',
         completed: false,
       });

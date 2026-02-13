@@ -1,5 +1,4 @@
 import { google } from 'googleapis';
-import fetch from 'node-fetch';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 
@@ -80,28 +79,16 @@ export async function deleteEvent(eventId) {
  * @returns {Promise<Array>} - Массив событий (items) из Google Calendar.
  */
 export async function getEventsForPeriod(startTime, endTime) {
-  const calendarId = 'primary'; // или можно вынести в переменную окружения
-  const timeMin = startTime.toISOString();
-  const timeMax = endTime.toISOString();
-
-  const url =
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?` +
-    `timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime`;
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${process.env.GOOGLE_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Ошибка при получении событий: ${response.status} ${response.statusText}. ${errorText}`
-    );
+  try {
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: startTime.toISOString(),
+      timeMax: endTime.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+    return response.data.items || [];
+  } catch (error) {
+    throw new Error(`Ошибка получения событий: ${error.message}`);
   }
-
-  const data = await response.json();
-  return data.items || [];
 }

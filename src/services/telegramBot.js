@@ -156,6 +156,50 @@ async function handleVoiceMessage(msg) {
 }
 
 /**
+ * Обработчик фото (Stage 6: Vision)
+ */
+async function handlePhotoMessage(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const user = await getOrCreateUser(msg.from);
+
+    await bot.sendMessage(chatId, '📷 Анализирую фото...');
+
+    // Telegram отдаёт массив размеров — берём максимальный (последний)
+    const photo = msg.photo[msg.photo.length - 1];
+    const fileUrl = await bot.getFileLink(photo.file_id);
+
+    // Скачиваем изображение
+    const response = await fetch(fileUrl);
+    const imageArrayBuffer = await response.arrayBuffer();
+    const imageBuffer = Buffer.from(imageArrayBuffer);
+
+    // Обрабатываем через MessageProcessor (caption как текст, фото как imageBuffer)
+    const result = await messageProcessor.processMessage({
+      userId: user.id,
+      messageText: msg.caption || '',
+      platform: 'telegram',
+      messageType: 'photo',
+      imageBuffer,
+      metadata: {
+        chat_id: chatId,
+        telegram_user_id: msg.from.id,
+        username: msg.from.username,
+        photo_file_id: photo.file_id,
+      },
+    });
+
+    await bot.sendMessage(chatId, result.response);
+
+    logger.info(`Telegram: фото обработано для user=${user.id}, chat=${chatId}`);
+  } catch (error) {
+    logger.error('Ошибка handlePhotoMessage:', error);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка при обработке фото.');
+  }
+}
+
+/**
  * Основной обработчик всех сообщений
  */
 bot.on('message', async (msg) => {
@@ -178,9 +222,9 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Фото (пока не поддерживается)
+  // Фото (Stage 6: Vision)
   if (msg.photo) {
-    await bot.sendMessage(chatId, '📷 Обработка фото будет добавлена в следующих версиях (Stage 6: Vision).');
+    await handlePhotoMessage(msg);
     return;
   }
 

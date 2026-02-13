@@ -59,6 +59,13 @@ class ClaudeService {
    - Искать заметки, задачи, события
    - Сводки и отчеты
 
+5. **Анализ фото (Vision)**
+   - Чеки и документы → создание заметок с суммой и деталями
+   - Визитки → извлечение имени, телефона, email, должности
+   - Скриншоты → описание содержимого
+   - Текст на фото → распознавание и сохранение
+   - Если пользователь прислал фото с подписью — учитывай подпись как контекст
+
 **Стиль общения:**
 - Дружелюбный и профессиональный
 - Краткие и четкие ответы
@@ -156,14 +163,32 @@ class ClaudeService {
         }
       }
 
-      // Добавляем текущее сообщение
-      messages.push({
-        role: 'user',
-        content: userMessage,
-      });
+      // Добавляем текущее сообщение (с поддержкой изображений)
+      if (options.imageBuffer) {
+        // Multimodal: изображение + текст
+        const userContent = [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: options.mimeType || 'image/jpeg',
+              data: options.imageBuffer.toString('base64'),
+            },
+          },
+          {
+            type: 'text',
+            text: userMessage || 'Что на этом изображении? Опиши и предложи действие.',
+          },
+        ];
+        messages.push({ role: 'user', content: userContent });
+      } else {
+        messages.push({ role: 'user', content: userMessage });
+      }
 
-      // Выбираем модель (Haiku или Sonnet)
-      const model = options.forceModel || this._selectModel(userMessage, messages);
+      // Выбираем модель (фото → всегда Sonnet для качества Vision)
+      const model = options.imageBuffer
+        ? this.models.sonnet
+        : options.forceModel || this._selectModel(userMessage, messages);
 
       logger.info(`Claude API: используем ${model === this.models.haiku ? 'Haiku' : 'Sonnet'}`);
 

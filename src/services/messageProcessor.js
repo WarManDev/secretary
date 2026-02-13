@@ -1,5 +1,6 @@
 import sessionManager from './sessionManager.js';
 import claudeService from './claudeService.js';
+import { createEvent as createGoogleEvent } from './googleCalendarService.js';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
 
@@ -23,6 +24,7 @@ class MessageProcessor {
     messageText,
     platform = 'api',
     messageType = 'text',
+    imageBuffer = null,
     metadata = {},
   }) {
     try {
@@ -32,8 +34,9 @@ class MessageProcessor {
       // 2. Загружаем контекст ПЕРЕД сохранением (иначе текущее сообщение дублируется)
       const historyData = await sessionManager.getHistoryWithSummary(session.id, 10);
 
-      // 3. Сохраняем сообщение пользователя в БД
-      await sessionManager.addMessage(session.id, 'user', messageText, messageType);
+      // 3. Сохраняем сообщение пользователя в БД (для фото без подписи сохраняем placeholder)
+      const textToSave = messageText || (messageType === 'photo' ? '[Фото]' : '[Сообщение]');
+      await sessionManager.addMessage(session.id, 'user', textToSave, messageType);
 
       // 4. Если нужно создать summary - создаём асинхронно (не блокируем ответ)
       if (historyData.shouldCreateSummary) {
@@ -47,7 +50,8 @@ class MessageProcessor {
       const { intent, response, toolCalls } = await this.detectIntentAndAct(
         messageText,
         historyData,
-        userId
+        userId,
+        { imageBuffer }
       );
 
       // 5. Сохраняем ответ бота
@@ -78,10 +82,13 @@ class MessageProcessor {
    * Определить намерение и выполнить действие
    * Использует Claude AI для понимания запросов
    */
-  async detectIntentAndAct(messageText, history, userId) {
+  async detectIntentAndAct(messageText, history, userId, options = {}) {
     try {
-      // 1. Отправляем сообщение в Claude AI
-      const aiResponse = await claudeService.sendMessage(messageText, history);
+      // 1. Отправляем сообщение в Claude AI (с фото если есть)
+      const aiResponse = await claudeService.sendMessage(messageText, history, {
+        imageBuffer: options.imageBuffer,
+        mimeType: 'image/jpeg',
+      });
 
       const { intent, response, data, modelUsed } = aiResponse;
 
@@ -201,20 +208,45 @@ class MessageProcessor {
     }
 
     try {
+      const eventDate = new Date(data.event_date);
+      const endDate = data.end_date ? new Date(data.end_date) : new Date(eventDate.getTime() + 60 * 60 * 1000); // +1 час по умолчанию
+
+      // 1. Сохраняем в локальную БД
       const event = await models.Event.create({
         user_id: userId,
         title: data.title,
         description: data.description || null,
-        event_date: new Date(data.event_date),
-        end_date: data.end_date ? new Date(data.end_date) : null,
+        event_date: eventDate,
+        end_date: endDate,
         reminder_minutes: data.reminder_minutes || 15,
       });
+
+      // 2. Синхронизируем с Google Calendar
+      try {
+        const gcalEvent = await createGoogleEvent({
+          summary: data.title,
+          description: data.description || '',
+          start: { dateTime: eventDate.toISOString() },
+          end: { dateTime: endDate.toISOString() },
+          reminders: {
+            useDefault: false,
+            overrides: [{ method: 'popup', minutes: data.reminder_minutes || 15 }],
+          },
+        });
+
+        // Сохраняем Google Calendar ID для будущей синхронизации
+        await event.update({ google_calendar_event_id: gcalEvent.id });
+        logger.info(`Событие синхронизировано с Google Calendar: gcal_id=${gcalEvent.id}`);
+      } catch (gcalError) {
+        // Google Calendar недоступен — событие всё равно сохранено в БД
+        logger.warn('Google Calendar sync failed (событие сохранено локально):', gcalError.message);
+      }
 
       logger.info(`Создано событие: id=${event.id}, user=${userId}`);
 
       return {
         action: 'create_event',
-        result: { event_id: event.id },
+        result: { event_id: event.id, google_synced: !!event.google_calendar_event_id },
       };
     } catch (error) {
       logger.error('Ошибка создания события:', error);

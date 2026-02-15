@@ -1,12 +1,15 @@
-import config from '../config/index.js';
 import logger from '../config/logger.js';
 
-const API_KEY = config.yandex?.weatherApiKey;
-const BASE_URL = 'https://api.weather.yandex.ru/v2';
+/**
+ * Weather Service — Open-Meteo API
+ * Полностью бесплатный, без API ключа, без лимитов
+ * https://open-meteo.com/
+ */
+
+const BASE_URL = 'https://api.open-meteo.com/v1';
 
 /**
  * Словарь городов → координаты
- * Яндекс Weather API работает только с lat/lon
  */
 const CITY_COORDS = {
   // Россия
@@ -76,81 +79,83 @@ function getCityCoords(city) {
 }
 
 /**
- * Перевод condition Яндекса на русский
+ * Описание погодных кодов WMO (Open-Meteo)
  */
-const CONDITIONS = {
-  'clear': 'ясно',
-  'partly-cloudy': 'малооблачно',
-  'cloudy': 'облачно с прояснениями',
-  'overcast': 'пасмурно',
-  'light-rain': 'небольшой дождь',
-  'rain': 'дождь',
-  'heavy-rain': 'сильный дождь',
-  'showers': 'ливень',
-  'wet-snow': 'дождь со снегом',
-  'light-snow': 'небольшой снег',
-  'snow': 'снег',
-  'snow-showers': 'снегопад',
-  'hail': 'град',
-  'thunderstorm': 'гроза',
-  'thunderstorm-with-rain': 'дождь с грозой',
-  'thunderstorm-with-hail': 'гроза с градом',
-};
+function getWeatherDescription(code) {
+  const descriptions = {
+    0: 'ясно',
+    1: 'преимущественно ясно',
+    2: 'переменная облачность',
+    3: 'пасмурно',
+    45: 'туман',
+    48: 'изморозь',
+    51: 'лёгкая морось',
+    53: 'морось',
+    55: 'сильная морось',
+    61: 'небольшой дождь',
+    63: 'дождь',
+    65: 'сильный дождь',
+    66: 'ледяной дождь',
+    67: 'сильный ледяной дождь',
+    71: 'небольшой снег',
+    73: 'снег',
+    75: 'сильный снег',
+    77: 'снежная крупа',
+    80: 'небольшой ливень',
+    81: 'ливень',
+    82: 'сильный ливень',
+    85: 'небольшой снегопад',
+    86: 'сильный снегопад',
+    95: 'гроза',
+    96: 'гроза с градом',
+    99: 'сильная гроза с градом',
+  };
+  return descriptions[code] || 'неизвестно';
+}
 
-const CONDITION_ICONS = {
-  'clear': '☀️',
-  'partly-cloudy': '⛅',
-  'cloudy': '🌥',
-  'overcast': '☁️',
-  'light-rain': '🌦',
-  'rain': '🌧',
-  'heavy-rain': '🌧',
-  'showers': '🌧',
-  'wet-snow': '🌨',
-  'light-snow': '🌨',
-  'snow': '❄️',
-  'snow-showers': '❄️',
-  'hail': '🌨',
-  'thunderstorm': '⛈',
-  'thunderstorm-with-rain': '⛈',
-  'thunderstorm-with-hail': '⛈',
-};
+function getWeatherIcon(code) {
+  if (code === 0) return '☀️';
+  if (code <= 2) return '⛅';
+  if (code === 3) return '☁️';
+  if (code <= 48) return '🌫';
+  if (code <= 55) return '🌦';
+  if (code <= 65) return '🌧';
+  if (code <= 67) return '🌧';
+  if (code <= 77) return '❄️';
+  if (code <= 82) return '🌧';
+  if (code <= 86) return '❄️';
+  return '⛈';
+}
 
 /**
  * Получает текущую погоду для города
  * @param {string} city - Название города
- * @returns {Object} - { city, temp, feels_like, description, humidity, wind, condition }
+ * @returns {Object} - { city, temp, feels_like, description, humidity, wind, weatherCode }
  */
 export async function getCurrentWeather(city) {
-  if (!API_KEY) {
-    throw new Error('YANDEX_WEATHER_API_KEY не настроен. Добавь ключ в .env');
-  }
-
   const coords = getCityCoords(city);
   if (!coords) {
     throw new Error(`Город "${city}" не найден. Попробуй указать крупный город.`);
   }
 
-  const url = `${BASE_URL}/forecast?lat=${coords.lat}&lon=${coords.lon}&lang=ru_RU&limit=1&hours=false`;
-  const response = await fetch(url, {
-    headers: { 'X-Yandex-Weather-Key': API_KEY },
-  });
+  const url = `${BASE_URL}/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto`;
+  const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`Yandex Weather API error: ${response.status}`);
+    throw new Error(`Open-Meteo API error: ${response.status}`);
   }
 
   const data = await response.json();
-  const fact = data.fact;
+  const current = data.current;
 
   return {
     city: coords.name,
-    temp: fact.temp,
-    feels_like: fact.feels_like,
-    description: CONDITIONS[fact.condition] || fact.condition,
-    humidity: fact.humidity,
-    wind: Math.round(fact.wind_speed),
-    condition: fact.condition,
+    temp: Math.round(current.temperature_2m),
+    feels_like: Math.round(current.apparent_temperature),
+    description: getWeatherDescription(current.weather_code),
+    humidity: current.relative_humidity_2m,
+    wind: Math.round(current.wind_speed_10m * 1000 / 3600), // км/ч → м/с
+    weatherCode: current.weather_code,
   };
 }
 
@@ -161,43 +166,34 @@ export async function getCurrentWeather(city) {
  * @returns {Object} - { city, date, forecasts: [{ time, temp, description }] }
  */
 export async function getForecast(city, date) {
-  if (!API_KEY) {
-    throw new Error('YANDEX_WEATHER_API_KEY не настроен');
-  }
-
   const coords = getCityCoords(city);
   if (!coords) {
     throw new Error(`Город "${city}" не найден`);
   }
 
-  const url = `${BASE_URL}/forecast?lat=${coords.lat}&lon=${coords.lon}&lang=ru_RU&limit=7&hours=true`;
-  const response = await fetch(url, {
-    headers: { 'X-Yandex-Weather-Key': API_KEY },
-  });
+  const targetDate = date || new Date().toISOString().split('T')[0];
+
+  const url = `${BASE_URL}/forecast?latitude=${coords.lat}&longitude=${coords.lon}&hourly=temperature_2m,apparent_temperature,weather_code&start_date=${targetDate}&end_date=${targetDate}&timezone=auto`;
+  const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`Yandex Weather API error: ${response.status}`);
+    throw new Error(`Open-Meteo API error: ${response.status}`);
   }
 
   const data = await response.json();
+  const hourly = data.hourly;
 
-  // Ищем нужную дату в прогнозе
-  const targetDate = date || new Date().toISOString().split('T')[0];
-  const dayForecast = data.forecasts?.find(f => f.date === targetDate);
-
-  if (!dayForecast) {
-    return { city: coords.name, date: targetDate, forecasts: [] };
+  // Берём каждые 3 часа
+  const forecasts = [];
+  for (let i = 0; i < (hourly.time?.length || 0); i += 3) {
+    const time = hourly.time[i].split('T')[1].slice(0, 5);
+    forecasts.push({
+      time,
+      temp: Math.round(hourly.temperature_2m[i]),
+      feels_like: Math.round(hourly.apparent_temperature[i]),
+      description: getWeatherDescription(hourly.weather_code[i]),
+    });
   }
-
-  // Берём почасовой прогноз (каждые 3 часа)
-  const forecasts = (dayForecast.hours || [])
-    .filter((_, i) => i % 3 === 0)
-    .map(h => ({
-      time: `${h.hour.padStart(2, '0')}:00`,
-      temp: h.temp,
-      feels_like: h.feels_like,
-      description: CONDITIONS[h.condition] || h.condition,
-    }));
 
   return {
     city: coords.name,
@@ -210,7 +206,7 @@ export async function getForecast(city, date) {
  * Форматирует погоду в текстовый ответ
  */
 export function formatWeatherResponse(weather, forecast = null) {
-  const icon = CONDITION_ICONS[weather.condition] || '🌤';
+  const icon = getWeatherIcon(weather.weatherCode);
 
   let text = `${icon} **${weather.city}:** ${weather.temp}°C (ощущается ${weather.feels_like}°C)\n`;
   text += `${weather.description}, влажность ${weather.humidity}%, ветер ${weather.wind} м/с\n`;

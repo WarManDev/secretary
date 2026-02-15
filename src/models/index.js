@@ -8,6 +8,7 @@ import MessageModel from './message.js';
 import SummaryModel from './summary.js';
 import NoteModel from './note.js';
 import ReminderModel from './reminder.js';
+import ExpenseModel from './expense.js';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 
@@ -34,6 +35,7 @@ const models = {
   Summary: SummaryModel(sequelize),
   Note: NoteModel(sequelize),
   Reminder: ReminderModel(sequelize),
+  Expense: ExpenseModel(sequelize),
 };
 
 // Настройка ассоциаций
@@ -74,6 +76,10 @@ models.Reminder.belongsTo(models.User, { foreignKey: 'user_id' });
 models.User.hasMany(models.Reminder, { foreignKey: 'user_id' });
 models.Reminder.belongsTo(models.Event, { foreignKey: 'event_id' });
 models.Event.hasMany(models.Reminder, { foreignKey: 'event_id' });
+
+// Расходы
+models.Expense.belongsTo(models.User, { foreignKey: 'user_id' });
+models.User.hasMany(models.Expense, { foreignKey: 'user_id' });
 
 // Экспортируем sequelize и models
 // Аутентификация и sync теперь происходят в server.js

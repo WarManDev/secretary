@@ -6,6 +6,7 @@ import { sequelize } from './models/index.js';
 // Импортируем Telegram бот (side effect — запускает polling)
 import './services/telegramBot.js';
 import { startReminderScheduler, stopReminderScheduler } from './services/reminderScheduler.js';
+import { startDigestScheduler, stopDigestScheduler } from './services/digestScheduler.js';
 
 // Проверяем подключение к базе данных
 async function connectDatabase() {
@@ -31,6 +32,7 @@ async function connectDatabase() {
 const server = app.listen(config.port, async () => {
   await connectDatabase();
   startReminderScheduler();
+  startDigestScheduler();
   logger.info(`✓ Сервер запущен на порту ${config.port}`);
   logger.info(`✓ Окружение: ${config.env}`);
 });
@@ -59,8 +61,9 @@ async function gracefulShutdown(signal) {
   }, 30000);
 
   try {
-    // 3. Останавливаем планировщик напоминаний
+    // 3. Останавливаем планировщики
     stopReminderScheduler();
+    stopDigestScheduler();
 
     // 4. Закрываем соединение с БД
     await sequelize.close();

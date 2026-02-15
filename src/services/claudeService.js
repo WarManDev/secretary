@@ -82,11 +82,18 @@ class ClaudeService {
 - delete_note - удалить заметку (data: { content (текст или часть текста для поиска) })
 - delete_task - удалить задачу (data: { title (для поиска) })
 - create_reminder - создать напоминание (data: { text, remind_at (ISO 8601), is_recurring (bool), recurrence_rule ("daily"|"weekly"|"monthly") })
+- check_schedule - проверить расписание, найти свободные окна (data: { date_from (ISO 8601), date_to (ISO 8601), duration_minutes (число, опционально — если нужно найти свободное окно определённой длительности) })
+- create_expense - записать расход (data: { amount (число), currency ("RUB"|"USD"|"EUR"), category ("food"|"transport"|"office"|"entertainment"|"services"|"other"), description (текст), expense_date (YYYY-MM-DD, по умолчанию сегодня) })
+- list_expenses - показать расходы за период (data: { period ("today"|"week"|"month"), category (опционально) })
+- check_weather - узнать погоду (data: { city (название города), date (YYYY-MM-DD, опционально, по умолчанию сегодня) })
+- convert_currency - конвертация валют (data: { amount (число), from ("USD"|"EUR"|"RUB"|...), to ("RUB"|"USD"|"EUR"|...) })
 - list - показать список (data: { type: "notes"|"tasks"|"events"|"reminders"|"all" })
 - chat - обычный разговор (без data)
 
 **ВАЖНО при удалении:** Всегда подтверждай в ответе что именно удалил. Если не уверен какой элемент имеется в виду — переспроси.
 **ВАЖНО при напоминаниях:** "через 2 часа" — вычисли точное время. "каждый понедельник" — is_recurring=true, recurrence_rule="weekly". Всегда подтверждай время напоминания в ответе.
+**ВАЖНО при расписании:** "когда я свободен" — используй check_schedule с date_from/date_to. "найди окно на 2 часа" — добавь duration_minutes=120. Рабочий день: 09:00-18:00. Если пользователь не уточняет период — бери текущую неделю (до воскресенья).
+**ВАЖНО при расходах:** "потратил 3500 на обед" — create_expense с amount=3500, category="food". Всегда определяй категорию по контексту. По умолчанию currency=RUB. Фото чека → Vision распознает сумму → create_expense.
 
 **Формат ответа — ВСЕГДА JSON:**
 {

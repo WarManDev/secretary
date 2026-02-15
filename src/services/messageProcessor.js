@@ -1,6 +1,8 @@
 import sessionManager from './sessionManager.js';
 import claudeService from './claudeService.js';
-import { createEvent as createGoogleEvent, updateEvent as updateGoogleEvent, deleteEvent as deleteGoogleEvent } from './googleCalendarService.js';
+import { createEvent as createGoogleEvent, updateEvent as updateGoogleEvent, deleteEvent as deleteGoogleEvent, getEventsForPeriod } from './googleCalendarService.js';
+import { getCurrentWeather, getForecast, formatWeatherResponse } from './weatherService.js';
+import { convertCurrency, formatCurrencyResponse } from './currencyService.js';
 import { Op } from 'sequelize';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
@@ -135,6 +137,38 @@ class MessageProcessor {
 
           case 'create_reminder':
             toolCall = await this.executeCreateReminder(userId, action.data);
+            break;
+
+          case 'check_schedule':
+            toolCall = await this.executeCheckSchedule(userId, action.data, response);
+            if (toolCall?.enrichedResponse) {
+              enrichedResponse = toolCall.enrichedResponse;
+            }
+            break;
+
+          case 'create_expense':
+            toolCall = await this.executeCreateExpense(userId, action.data);
+            break;
+
+          case 'list_expenses':
+            toolCall = await this.executeListExpenses(userId, action.data, response);
+            if (toolCall?.enrichedResponse) {
+              enrichedResponse = toolCall.enrichedResponse;
+            }
+            break;
+
+          case 'check_weather':
+            toolCall = await this.executeCheckWeather(userId, action.data, response);
+            if (toolCall?.enrichedResponse) {
+              enrichedResponse = toolCall.enrichedResponse;
+            }
+            break;
+
+          case 'convert_currency':
+            toolCall = await this.executeConvertCurrency(userId, action.data, response);
+            if (toolCall?.enrichedResponse) {
+              enrichedResponse = toolCall.enrichedResponse;
+            }
             break;
 
           case 'search':
@@ -529,6 +563,365 @@ class MessageProcessor {
       logger.error('Ошибка создания напоминания:', error);
       return null;
     }
+  }
+
+  /**
+   * Проверить погоду
+   */
+  async executeCheckWeather(userId, data, aiResponse) {
+    try {
+      const city = data?.city || 'Moscow';
+      const date = data?.date || null;
+
+      const weather = await getCurrentWeather(city);
+      let forecast = null;
+
+      if (date) {
+        try {
+          forecast = await getForecast(city, date);
+        } catch (e) {
+          logger.warn('Не удалось получить прогноз:', e.message);
+        }
+      }
+
+      const enrichedResponse = formatWeatherResponse(weather, forecast);
+
+      logger.info(`check_weather: user=${userId}, city=${city}, temp=${weather.temp}`);
+
+      return {
+        action: 'check_weather',
+        result: { city, temp: weather.temp },
+        enrichedResponse,
+      };
+    } catch (error) {
+      logger.error('Ошибка check_weather:', error.message);
+      return {
+        action: 'check_weather',
+        result: null,
+        enrichedResponse: `Не удалось получить погоду: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Конвертация валют
+   */
+  async executeConvertCurrency(userId, data, aiResponse) {
+    try {
+      const amount = data?.amount || 1;
+      const from = data?.from || 'USD';
+      const to = data?.to || 'RUB';
+
+      const result = await convertCurrency(amount, from, to);
+      const enrichedResponse = formatCurrencyResponse(result);
+
+      logger.info(`convert_currency: user=${userId}, ${amount} ${from} → ${result.result} ${to}`);
+
+      return {
+        action: 'convert_currency',
+        result,
+        enrichedResponse,
+      };
+    } catch (error) {
+      logger.error('Ошибка convert_currency:', error.message);
+      return {
+        action: 'convert_currency',
+        result: null,
+        enrichedResponse: `Не удалось конвертировать: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Создать расход
+   */
+  async executeCreateExpense(userId, data) {
+    if (!data?.amount) {
+      logger.warn('executeCreateExpense: нет amount');
+      return null;
+    }
+
+    try {
+      const expense = await models.Expense.create({
+        user_id: userId,
+        amount: data.amount,
+        currency: data.currency || 'RUB',
+        category: data.category || 'other',
+        description: data.description || null,
+        expense_date: data.expense_date || new Date().toISOString().split('T')[0],
+      });
+
+      logger.info(`Создан расход: id=${expense.id}, user=${userId}, amount=${data.amount} ${data.currency || 'RUB'}`);
+
+      return {
+        action: 'create_expense',
+        result: { expense_id: expense.id },
+      };
+    } catch (error) {
+      logger.error('Ошибка создания расхода:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Показать расходы за период
+   */
+  async executeListExpenses(userId, data, aiResponse) {
+    try {
+      const period = data?.period || 'month';
+      const now = new Date();
+      let dateFrom;
+
+      switch (period) {
+        case 'today':
+          dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          break;
+        case 'week': {
+          dateFrom = new Date(now);
+          dateFrom.setDate(dateFrom.getDate() - 7);
+          break;
+        }
+        case 'month':
+        default:
+          dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+      }
+
+      const where = {
+        user_id: userId,
+        expense_date: { [Op.gte]: dateFrom },
+      };
+      if (data?.category) {
+        where.category = data.category;
+      }
+
+      const expenses = await models.Expense.findAll({
+        where,
+        order: [['expense_date', 'DESC']],
+      });
+
+      // Группируем по категории и считаем суммы
+      const byCategory = {};
+      let total = 0;
+      for (const e of expenses) {
+        const cat = e.category || 'other';
+        if (!byCategory[cat]) byCategory[cat] = { total: 0, items: [] };
+        const amount = parseFloat(e.amount);
+        byCategory[cat].total += amount;
+        byCategory[cat].items.push(e);
+        total += amount;
+      }
+
+      const categoryNames = {
+        food: '🍽 Еда',
+        transport: '🚗 Транспорт',
+        office: '🏢 Офис',
+        entertainment: '🎬 Развлечения',
+        services: '🔧 Услуги',
+        other: '📦 Прочее',
+      };
+
+      const periodNames = { today: 'сегодня', week: 'за неделю', month: 'за месяц' };
+      let enrichedResponse = `💰 **Расходы ${periodNames[period] || 'за период'}:**\n\n`;
+
+      if (expenses.length === 0) {
+        enrichedResponse += 'Расходов не найдено. Чтобы записать расход, скажи например: "потратил 500 на такси".\n';
+      } else {
+        for (const [cat, data] of Object.entries(byCategory)) {
+          const catName = categoryNames[cat] || `📌 ${cat}`;
+          enrichedResponse += `**${catName}:** ${data.total.toLocaleString('ru-RU')} ₽\n`;
+          for (const item of data.items.slice(0, 5)) {
+            const desc = item.description || 'без описания';
+            const date = new Date(item.expense_date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+            enrichedResponse += `  • ${parseFloat(item.amount).toLocaleString('ru-RU')} ₽ — ${desc} (${date})\n`;
+          }
+          if (data.items.length > 5) {
+            enrichedResponse += `  ... и ещё ${data.items.length - 5}\n`;
+          }
+        }
+        enrichedResponse += `\n**Итого: ${total.toLocaleString('ru-RU')} ₽**`;
+      }
+
+      logger.info(`list_expenses: user=${userId}, period=${period}, count=${expenses.length}, total=${total}`);
+
+      return {
+        action: 'list_expenses',
+        result: { count: expenses.length, total },
+        enrichedResponse,
+      };
+    } catch (error) {
+      logger.error('Ошибка list_expenses:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Проверить расписание: вывести события и/или найти свободные окна
+   */
+  async executeCheckSchedule(userId, data, aiResponse) {
+    try {
+      const now = new Date();
+      const dateFrom = data?.date_from ? new Date(data.date_from) : now;
+      // По умолчанию — до конца текущей недели (воскресенье)
+      const defaultTo = new Date(now);
+      defaultTo.setDate(defaultTo.getDate() + (7 - defaultTo.getDay()));
+      defaultTo.setHours(23, 59, 59, 999);
+      const dateTo = data?.date_to ? new Date(data.date_to) : defaultTo;
+      const durationMinutes = data?.duration_minutes || null;
+
+      // Получаем события из Google Calendar
+      let gcalEvents = [];
+      try {
+        gcalEvents = await getEventsForPeriod(userId, dateFrom, dateTo);
+      } catch (gcalError) {
+        logger.warn('Google Calendar недоступен для check_schedule:', gcalError.message);
+        // Fallback: берём из локальной БД
+        const localEvents = await models.Event.findAll({
+          where: {
+            user_id: userId,
+            event_date: { [Op.gte]: dateFrom, [Op.lte]: dateTo },
+          },
+          order: [['event_date', 'ASC']],
+        });
+        gcalEvents = localEvents.map(e => ({
+          summary: e.title,
+          start: { dateTime: e.event_date.toISOString() },
+          end: { dateTime: (e.end_date || new Date(e.event_date.getTime() + 3600000)).toISOString() },
+          location: e.location,
+        }));
+      }
+
+      // Формируем список занятого времени
+      const busySlots = gcalEvents.map(e => ({
+        title: e.summary || 'Без названия',
+        start: new Date(e.start?.dateTime || e.start?.date),
+        end: new Date(e.end?.dateTime || e.end?.date),
+        location: e.location || null,
+      })).sort((a, b) => a.start - b.start);
+
+      // Строим ответ
+      let enrichedResponse = '';
+      const fromStr = dateFrom.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+      const toStr = dateTo.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+
+      enrichedResponse += `📅 **Расписание: ${fromStr} — ${toStr}**\n\n`;
+
+      if (busySlots.length === 0) {
+        enrichedResponse += 'У тебя нет запланированных событий в этот период — ты полностью свободен! 🎉\n';
+      } else {
+        enrichedResponse += `**Занято (${busySlots.length} событий):**\n`;
+        for (const slot of busySlots) {
+          const day = slot.start.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+          const startTime = slot.start.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          const endTime = slot.end.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          enrichedResponse += `• ${day}, ${startTime}–${endTime} — ${slot.title}`;
+          if (slot.location) enrichedResponse += ` 📍${slot.location}`;
+          enrichedResponse += '\n';
+        }
+      }
+
+      // Находим свободные окна (рабочие часы 09:00-18:00)
+      if (durationMinutes) {
+        enrichedResponse += `\n**Свободные окна (≥${durationMinutes} мин):**\n`;
+        const freeSlots = this._findFreeSlots(dateFrom, dateTo, busySlots, durationMinutes);
+
+        if (freeSlots.length === 0) {
+          enrichedResponse += 'Нет подходящих свободных окон в рабочие часы. Попробуй расширить период.\n';
+        } else {
+          for (const slot of freeSlots.slice(0, 10)) {
+            const day = slot.start.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+            const startTime = slot.start.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            const endTime = slot.end.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            const durationHrs = Math.round((slot.end - slot.start) / 60000);
+            enrichedResponse += `✅ ${day}, ${startTime}–${endTime} (${durationHrs} мин свободно)\n`;
+          }
+        }
+      }
+
+      logger.info(`check_schedule: user=${userId}, events=${busySlots.length}, period=${dateFrom.toISOString()}..${dateTo.toISOString()}`);
+
+      return {
+        action: 'check_schedule',
+        result: { events_count: busySlots.length },
+        enrichedResponse,
+      };
+    } catch (error) {
+      logger.error('Ошибка check_schedule:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Находит свободные окна в рабочих часах (09:00-18:00) между событиями
+   */
+  _findFreeSlots(dateFrom, dateTo, busySlots, minDurationMinutes) {
+    const freeSlots = [];
+    const workStartHour = 9;
+    const workEndHour = 18;
+    const now = new Date();
+
+    // Проходим по каждому дню в периоде
+    const current = new Date(dateFrom);
+    current.setHours(0, 0, 0, 0);
+
+    while (current <= dateTo) {
+      // Пропускаем выходные (суббота=6, воскресенье=0)
+      const dayOfWeek = current.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        current.setDate(current.getDate() + 1);
+        continue;
+      }
+
+      const dayStart = new Date(current);
+      dayStart.setHours(workStartHour, 0, 0, 0);
+      const dayEnd = new Date(current);
+      dayEnd.setHours(workEndHour, 0, 0, 0);
+
+      // Не анализируем прошедшее время
+      const effectiveStart = dayStart < now ? now : dayStart;
+      if (effectiveStart >= dayEnd) {
+        current.setDate(current.getDate() + 1);
+        continue;
+      }
+
+      // Фильтруем события этого дня
+      const dayEvents = busySlots
+        .filter(e => {
+          const eventDay = e.start.toDateString();
+          return eventDay === current.toDateString();
+        })
+        .sort((a, b) => a.start - b.start);
+
+      // Ищем свободные промежутки
+      let pointer = new Date(effectiveStart);
+
+      for (const event of dayEvents) {
+        const eventStart = event.start < dayStart ? dayStart : event.start;
+        const eventEnd = event.end > dayEnd ? dayEnd : event.end;
+
+        if (pointer < eventStart) {
+          const gapMinutes = (eventStart - pointer) / 60000;
+          if (gapMinutes >= minDurationMinutes) {
+            freeSlots.push({ start: new Date(pointer), end: new Date(eventStart) });
+          }
+        }
+        if (eventEnd > pointer) {
+          pointer = new Date(eventEnd);
+        }
+      }
+
+      // Свободное время после последнего события до конца рабочего дня
+      if (pointer < dayEnd) {
+        const gapMinutes = (dayEnd - pointer) / 60000;
+        if (gapMinutes >= minDurationMinutes) {
+          freeSlots.push({ start: new Date(pointer), end: new Date(dayEnd) });
+        }
+      }
+
+      current.setDate(current.getDate() + 1);
+    }
+
+    return freeSlots;
   }
 
   /**

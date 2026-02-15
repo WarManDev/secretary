@@ -43,6 +43,9 @@ const configSchema = z.object({
   // Token encryption (будущее - этап 2)
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
 
+  // OpenWeatherMap
+  OPENWEATHERMAP_API_KEY: z.string().optional(),
+
   // Stripe (будущее - этап 8)
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -113,6 +116,10 @@ export default {
 
   encryption: {
     key: config.TOKEN_ENCRYPTION_KEY,
+  },
+
+  openWeatherMap: {
+    apiKey: config.OPENWEATHERMAP_API_KEY,
   },
 
   stripe: {

@@ -82,6 +82,18 @@ export default (sequelize) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+
+      // Настройки утреннего дайджеста
+      digest_enabled: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
+      digest_hour: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 8, // 08:00 по таймзоне пользователя
+      },
     },
     {
       tableName: 'users',

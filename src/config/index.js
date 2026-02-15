@@ -43,8 +43,8 @@ const configSchema = z.object({
   // Token encryption (будущее - этап 2)
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
 
-  // OpenWeatherMap
-  OPENWEATHERMAP_API_KEY: z.string().optional(),
+  // Yandex Weather
+  YANDEX_WEATHER_API_KEY: z.string().optional(),
 
   // Stripe (будущее - этап 8)
   STRIPE_SECRET_KEY: z.string().optional(),
@@ -105,6 +105,7 @@ export default {
 
   yandex: {
     apiKey: config.YANDEX_API_KEY,
+    weatherApiKey: config.YANDEX_WEATHER_API_KEY,
   },
 
   jwt: {
@@ -116,10 +117,6 @@ export default {
 
   encryption: {
     key: config.TOKEN_ENCRYPTION_KEY,
-  },
-
-  openWeatherMap: {
-    apiKey: config.OPENWEATHERMAP_API_KEY,
   },
 
   stripe: {

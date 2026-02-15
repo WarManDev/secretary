@@ -9,6 +9,7 @@ const configSchema = z.object({
   // Node environment
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().transform(Number).default('3000'),
+  APP_URL: z.string().optional(), // http://localhost:3000 или https://your-domain.com
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
 
   // Database
@@ -67,6 +68,7 @@ try {
 export default {
   env: config.NODE_ENV,
   port: config.PORT,
+  appUrl: config.APP_URL || `http://localhost:${config.PORT}`,
   logLevel: config.LOG_LEVEL,
   isDevelopment: config.NODE_ENV === 'development',
   isProduction: config.NODE_ENV === 'production',

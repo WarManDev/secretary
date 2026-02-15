@@ -7,6 +7,7 @@ import SessionModel from './session.js';
 import MessageModel from './message.js';
 import SummaryModel from './summary.js';
 import NoteModel from './note.js';
+import ReminderModel from './reminder.js';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 
@@ -32,6 +33,7 @@ const models = {
   Message: MessageModel(sequelize),
   Summary: SummaryModel(sequelize),
   Note: NoteModel(sequelize),
+  Reminder: ReminderModel(sequelize),
 };
 
 // Настройка ассоциаций
@@ -66,6 +68,12 @@ models.Session.hasMany(models.Message, { foreignKey: 'session_id' });
 // Сводки для сессий
 models.Summary.belongsTo(models.Session, { foreignKey: 'session_id' });
 models.Session.hasMany(models.Summary, { foreignKey: 'session_id' });
+
+// Напоминания
+models.Reminder.belongsTo(models.User, { foreignKey: 'user_id' });
+models.User.hasMany(models.Reminder, { foreignKey: 'user_id' });
+models.Reminder.belongsTo(models.Event, { foreignKey: 'event_id' });
+models.Event.hasMany(models.Reminder, { foreignKey: 'event_id' });
 
 // Экспортируем sequelize и models
 // Аутентификация и sync теперь происходят в server.js

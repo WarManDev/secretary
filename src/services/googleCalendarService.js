@@ -1,94 +1,111 @@
 import { google } from 'googleapis';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
+import models from '../models/index.js';
 
-const {
-  clientId: GCAL_CLIENT_ID,
-  clientSecret: GCAL_CLIENT_SECRET,
-  refreshToken: GCAL_REFRESH_TOKEN,
-} = config.google.calendar;
-
-// Создаем OAuth2 клиент
-const oAuth2Client = new google.auth.OAuth2(
-  GCAL_CLIENT_ID,
-  GCAL_CLIENT_SECRET,
-  'urn:ietf:wg:oauth:2.0:oob' // Используем этот redirect URI, либо укажите ваш, если требуется
-);
-
-// Устанавливаем учетные данные с refresh token
-oAuth2Client.setCredentials({ refresh_token: GCAL_REFRESH_TOKEN });
-
-// Инициализируем клиент календаря с OAuth2 авторизацией
-const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+const { clientId: GCAL_CLIENT_ID, clientSecret: GCAL_CLIENT_SECRET } = config.google.calendar;
+const REDIRECT_URI = `${config.appUrl}/api/gcal/callback`;
 
 /**
- * Создает событие в календаре.
- * @param {Object} eventDetails - Объект с данными события.
- * @returns {Object} - Созданное событие.
+ * Создаёт per-user OAuth2 клиент и Calendar API instance.
+ * Автоматически обновляет access_token если истёк.
+ *
+ * @param {number} userId - ID пользователя
+ * @returns {import('googleapis').calendar_v3.Calendar} - Calendar API клиент
  */
-export async function createEvent(eventDetails) {
-  try {
-    const response = await calendar.events.insert({
-      calendarId: 'primary', // можно заменить на нужный ID календаря
-      requestBody: eventDetails,
-    });
-    return response.data;
-  } catch (error) {
-    throw new Error(`Ошибка создания события: ${error.message}`);
+async function getUserCalendarClient(userId) {
+  const user = await models.User.findByPk(userId);
+
+  if (!user?.google_refresh_token) {
+    throw new Error('Google Calendar не подключён. Используй /calendar для подключения.');
   }
+
+  const oAuth2Client = new google.auth.OAuth2(GCAL_CLIENT_ID, GCAL_CLIENT_SECRET, REDIRECT_URI);
+
+  oAuth2Client.setCredentials({
+    refresh_token: user.google_refresh_token,
+    access_token: user.google_access_token,
+    expiry_date: user.google_token_expiry ? new Date(user.google_token_expiry).getTime() : null,
+  });
+
+  // Автосохранение обновлённых токенов
+  oAuth2Client.on('tokens', async (tokens) => {
+    try {
+      const updateData = {};
+      if (tokens.access_token) updateData.google_access_token = tokens.access_token;
+      if (tokens.expiry_date) updateData.google_token_expiry = new Date(tokens.expiry_date);
+      if (tokens.refresh_token) updateData.google_refresh_token = tokens.refresh_token;
+
+      await user.update(updateData);
+      logger.info(`Google OAuth tokens обновлены для user=${userId}`);
+    } catch (err) {
+      logger.error(`Ошибка автообновления токенов для user=${userId}:`, err.message);
+    }
+  });
+
+  return google.calendar({ version: 'v3', auth: oAuth2Client });
+}
+
+/**
+ * Создает событие в Google Calendar пользователя.
+ * @param {number} userId - ID пользователя
+ * @param {Object} eventDetails - Объект с данными события
+ * @returns {Object} - Созданное событие
+ */
+export async function createEvent(userId, eventDetails) {
+  const calendar = await getUserCalendarClient(userId);
+  const response = await calendar.events.insert({
+    calendarId: 'primary',
+    requestBody: eventDetails,
+  });
+  return response.data;
 }
 
 /**
  * Обновляет событие по его идентификатору.
- * @param {string} eventId - ID события.
- * @param {Object} updatedDetails - Обновленные данные события.
- * @returns {Object} - Обновленное событие.
+ * @param {number} userId - ID пользователя
+ * @param {string} eventId - ID события
+ * @param {Object} updatedDetails - Обновленные данные
+ * @returns {Object} - Обновленное событие
  */
-export async function updateEvent(eventId, updatedDetails) {
-  try {
-    const response = await calendar.events.update({
-      calendarId: 'primary',
-      eventId,
-      requestBody: updatedDetails,
-    });
-    return response.data;
-  } catch (error) {
-    throw new Error(`Ошибка обновления события: ${error.message}`);
-  }
+export async function updateEvent(userId, eventId, updatedDetails) {
+  const calendar = await getUserCalendarClient(userId);
+  const response = await calendar.events.patch({
+    calendarId: 'primary',
+    eventId,
+    requestBody: updatedDetails,
+  });
+  return response.data;
 }
 
 /**
  * Удаляет событие по его идентификатору.
- * @param {string} eventId - ID события.
+ * @param {number} userId - ID пользователя
+ * @param {string} eventId - ID события
  */
-export async function deleteEvent(eventId) {
-  try {
-    await calendar.events.delete({
-      calendarId: 'primary',
-      eventId,
-    });
-  } catch (error) {
-    throw new Error(`Ошибка удаления события: ${error.message}`);
-  }
+export async function deleteEvent(userId, eventId) {
+  const calendar = await getUserCalendarClient(userId);
+  await calendar.events.delete({
+    calendarId: 'primary',
+    eventId,
+  });
 }
 
 /**
  * Получает список событий из Google Calendar за указанный период.
- * @param {Date} startTime - Объект Date, представляющий начало периода.
- * @param {Date} endTime - Объект Date, представляющий конец периода.
- * @returns {Promise<Array>} - Массив событий (items) из Google Calendar.
+ * @param {number} userId - ID пользователя
+ * @param {Date} startTime - Начало периода
+ * @param {Date} endTime - Конец периода
+ * @returns {Promise<Array>} - Массив событий
  */
-export async function getEventsForPeriod(startTime, endTime) {
-  try {
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: startTime.toISOString(),
-      timeMax: endTime.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-    return response.data.items || [];
-  } catch (error) {
-    throw new Error(`Ошибка получения событий: ${error.message}`);
-  }
+export async function getEventsForPeriod(userId, startTime, endTime) {
+  const calendar = await getUserCalendarClient(userId);
+  const response = await calendar.events.list({
+    calendarId: 'primary',
+    timeMin: startTime.toISOString(),
+    timeMax: endTime.toISOString(),
+    singleEvents: true,
+    orderBy: 'startTime',
+  });
+  return response.data.items || [];
 }

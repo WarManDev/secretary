@@ -74,6 +74,62 @@ export async function convertOggToWav(oggBuffer) {
 }
 
 /**
+ * textToSpeechYandex – синтезирует речь из текста через Yandex SpeechKit.
+ * Возвращает OGG/Opus буфер, который Telegram принимает напрямую как голосовое сообщение.
+ *
+ * @param {string} text - Текст для озвучивания (макс ~5000 символов)
+ * @param {Object} options - Параметры голоса
+ * @param {string} options.voice - Голос: 'filipp', 'alena', 'jane', 'madirus', 'omazh', 'zahar', 'ermil'
+ * @param {string} options.emotion - Эмоция: 'neutral', 'good', 'evil'
+ * @param {string} options.speed - Скорость: '0.5'-'3.0' (1.0 = нормальная)
+ * @returns {Promise<Buffer|null>} - OGG/Opus буфер или null при ошибке
+ */
+export async function textToSpeechYandex(text, options = {}) {
+  try {
+    if (!text || text.trim().length === 0) return null;
+
+    // Убираем Markdown-разметку для более чистого озвучивания
+    const cleanText = text
+      .replace(/\*\*/g, '')
+      .replace(/[*_~`]/g, '')
+      .replace(/#{1,6}\s/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+    // Ограничиваем длину текста (Yandex лимит ~5000 символов)
+    const trimmedText = cleanText.length > 4500 ? cleanText.substring(0, 4500) + '...' : cleanText;
+
+    const apiKey = config.yandex.apiKey;
+    const params = new URLSearchParams({
+      text: trimmedText,
+      lang: 'ru-RU',
+      voice: options.voice || 'filipp',
+      emotion: options.emotion || 'neutral',
+      speed: options.speed || '1.1',
+      format: 'oggopus',
+    });
+
+    const response = await axios.post(
+      'https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize',
+      params.toString(),
+      {
+        headers: {
+          Authorization: `Api-Key ${apiKey}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        responseType: 'arraybuffer',
+      }
+    );
+
+    const buffer = Buffer.from(response.data);
+    logger.info(`TTS: синтезировано ${buffer.length} байт (${trimmedText.length} символов)`);
+    return buffer;
+  } catch (err) {
+    logger.error('Yandex TTS error:', err.response?.data?.toString() || err.message);
+    return null;
+  }
+}
+
+/**
  * speechToTextYandex – отправляет аудиоданные в API Яндекса для распознавания речи.
  * Поддерживает OGG/Opus (нативный формат Telegram) и WAV.
  *

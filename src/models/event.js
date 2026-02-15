@@ -25,6 +25,10 @@ export default (sequelize) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      location: {
+        type: DataTypes.STRING(500),
+        allowNull: true,
+      },
       event_date: {
         type: DataTypes.DATE,
         allowNull: false,

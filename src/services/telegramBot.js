@@ -3,7 +3,7 @@ import config from '../config/index.js';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
 import messageProcessor from './messageProcessor.js';
-import { speechToTextYandex } from './yandexSpeechService.js';
+import { speechToTextYandex, textToSpeechYandex } from './yandexSpeechService.js';
 
 /**
  * Telegram Bot Integration
@@ -61,6 +61,48 @@ async function getOrCreateUser(telegramUser) {
 }
 
 /**
+ * Обработчик команды /calendar — подключение Google Calendar
+ */
+async function handleCalendarCommand(msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const user = await getOrCreateUser(msg.from);
+    const authUrl = `${config.appUrl}/api/gcal/auth?userId=${user.id}`;
+
+    if (user.google_refresh_token) {
+      // Уже подключён
+      await bot.sendMessage(
+        chatId,
+        `✅ Google Calendar подключён!\n\nЯ создаю события в твоём календаре автоматически.\n\n🔄 Переподключить: ${authUrl}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '❌ Отключить календарь', callback_data: 'gcal_disconnect' }],
+            ],
+          },
+        }
+      );
+    } else {
+      // Не подключён
+      const isLocalhost = authUrl.includes('localhost');
+      const text = isLocalhost
+        ? `📅 Google Calendar не подключён.\n\nОткрой эту ссылку в браузере:\n\n${authUrl}`
+        : `📅 Google Calendar не подключён.\n\nНажми чтобы авторизовать доступ:`;
+
+      const options = isLocalhost
+        ? {}
+        : { reply_markup: { inline_keyboard: [[{ text: '🔗 Подключить Google Calendar', url: authUrl }]] } };
+
+      await bot.sendMessage(chatId, text, options);
+    }
+  } catch (error) {
+    logger.error('Ошибка handleCalendarCommand:', error);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте ещё раз.');
+  }
+}
+
+/**
  * Обработчик текстовых сообщений
  */
 async function handleTextMessage(msg) {
@@ -68,6 +110,11 @@ async function handleTextMessage(msg) {
   const messageText = msg.text;
 
   try {
+    // Перехватываем команду /calendar
+    if (messageText === '/calendar') {
+      return handleCalendarCommand(msg);
+    }
+
     // Получаем или создаём пользователя
     const user = await getOrCreateUser(msg.from);
 
@@ -143,10 +190,18 @@ async function handleVoiceMessage(msg) {
       },
     });
 
-    // TODO: Увеличение кредитов будет добавлено в Stage 8 (Monetization)
-
-    // Отправляем ответ
+    // Отправляем текстовый ответ
     await bot.sendMessage(chatId, result.response);
+
+    // Отправляем голосовой ответ (TTS) — секретарь отвечает голосом на голос
+    try {
+      const voiceBuffer = await textToSpeechYandex(result.response);
+      if (voiceBuffer) {
+        await bot.sendVoice(chatId, voiceBuffer, {}, { filename: 'response.ogg', contentType: 'audio/ogg' });
+      }
+    } catch (ttsError) {
+      logger.warn('TTS ответ не удался:', ttsError.message);
+    }
 
     logger.info(`Telegram: голосовое сообщение обработано для user=${user.id}, chat=${chatId}`);
   } catch (error) {
@@ -230,6 +285,31 @@ bot.on('message', async (msg) => {
 
   // Неподдерживаемый тип
   await bot.sendMessage(chatId, '❓ Тип сообщения не поддерживается. Отправьте текст или голос.');
+});
+
+/**
+ * Обработчик inline-кнопок (callback_query)
+ */
+bot.on('callback_query', async (query) => {
+  try {
+    if (query.data === 'gcal_disconnect') {
+      const user = await getOrCreateUser(query.from);
+
+      await user.update({
+        google_refresh_token: null,
+        google_access_token: null,
+        google_token_expiry: null,
+      });
+
+      await bot.answerCallbackQuery(query.id, { text: 'Google Calendar отключён' });
+      await bot.sendMessage(query.message.chat.id, '📅 Google Calendar отключён. Используй /calendar чтобы подключить снова.');
+
+      logger.info(`Google Calendar отключён для user=${user.id}`);
+    }
+  } catch (error) {
+    logger.error('Ошибка callback_query:', error);
+    await bot.answerCallbackQuery(query.id, { text: 'Ошибка' });
+  }
 });
 
 /**

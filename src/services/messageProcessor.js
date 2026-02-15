@@ -1,6 +1,7 @@
 import sessionManager from './sessionManager.js';
 import claudeService from './claudeService.js';
-import { createEvent as createGoogleEvent } from './googleCalendarService.js';
+import { createEvent as createGoogleEvent, updateEvent as updateGoogleEvent, deleteEvent as deleteGoogleEvent } from './googleCalendarService.js';
+import { Op } from 'sequelize';
 import logger from '../config/logger.js';
 import models from '../models/index.js';
 
@@ -79,7 +80,7 @@ class MessageProcessor {
   }
 
   /**
-   * Определить намерение и выполнить действие
+   * Определить намерение и выполнить действия (поддержка нескольких действий в одном сообщении)
    * Использует Claude AI для понимания запросов
    */
   async detectIntentAndAct(messageText, history, userId, options = {}) {
@@ -90,39 +91,75 @@ class MessageProcessor {
         mimeType: 'image/jpeg',
       });
 
-      const { intent, response, data, modelUsed } = aiResponse;
+      const { response, actions, modelUsed } = aiResponse;
 
-      logger.info(`AI: intent=${intent}, model=${modelUsed}`);
+      // Определяем intent для логирования
+      const mainIntent = actions.length > 0 ? actions.map((a) => a.type).join('+') : 'chat';
+      logger.info(`AI: intent=${mainIntent}, model=${modelUsed}`);
 
-      // 2. Выполняем действие в зависимости от намерения
-      let toolCalls = null;
+      // 2. Выполняем ВСЕ действия из массива actions
+      const allToolCalls = [];
+      let enrichedResponse = null;
 
-      switch (intent) {
-        case 'create_note':
-          toolCalls = await this.executeCreateNote(userId, data);
-          break;
+      for (const action of actions) {
+        let toolCall = null;
 
-        case 'create_task':
-          toolCalls = await this.executeCreateTask(userId, data);
-          break;
+        switch (action.type) {
+          case 'create_note':
+            toolCall = await this.executeCreateNote(userId, action.data);
+            break;
 
-        case 'create_event':
-          toolCalls = await this.executeCreateEvent(userId, data);
-          break;
+          case 'create_task':
+            toolCall = await this.executeCreateTask(userId, action.data);
+            break;
 
-        case 'search':
-        case 'list':
-          // TODO: реализовать поиск/список (Stage 5)
-          break;
+          case 'create_event':
+            toolCall = await this.executeCreateEvent(userId, action.data);
+            break;
 
-        case 'chat':
-        case 'help':
-        default:
-          // Просто разговор, ничего не делаем
-          break;
+          case 'update_event':
+            toolCall = await this.executeUpdateEvent(userId, action.data);
+            break;
+
+          case 'delete_event':
+            toolCall = await this.executeDeleteEvent(userId, action.data);
+            break;
+
+          case 'delete_note':
+            toolCall = await this.executeDeleteNote(userId, action.data);
+            break;
+
+          case 'delete_task':
+            toolCall = await this.executeDeleteTask(userId, action.data);
+            break;
+
+          case 'create_reminder':
+            toolCall = await this.executeCreateReminder(userId, action.data);
+            break;
+
+          case 'search':
+          case 'list':
+            toolCall = await this.executeList(userId, action.data, response);
+            if (toolCall?.enrichedResponse) {
+              enrichedResponse = toolCall.enrichedResponse;
+            }
+            break;
+
+          case 'chat':
+          default:
+            break;
+        }
+
+        if (toolCall) {
+          allToolCalls.push(toolCall);
+        }
       }
 
-      return { intent, response, toolCalls };
+      return {
+        intent: mainIntent,
+        response: enrichedResponse || response,
+        toolCalls: allToolCalls.length > 0 ? allToolCalls : null,
+      };
     } catch (error) {
       logger.error('Ошибка detectIntentAndAct:', error);
 
@@ -139,10 +176,10 @@ class MessageProcessor {
    * Создать заметку
    */
   async executeCreateNote(userId, data) {
-    // Claude может вернуть content, title+description, или просто title
-    const content = data?.content || data?.description || data?.title;
+    // Claude может вернуть content, title+description, text, или просто title
+    const content = data?.content || data?.text || data?.description || data?.title || data?.note;
     if (!content) {
-      logger.warn('executeCreateNote: нет content/title/description в data');
+      logger.warn('executeCreateNote: нет подходящего поля в data:', JSON.stringify(data));
       return null;
     }
 
@@ -216,14 +253,15 @@ class MessageProcessor {
         user_id: userId,
         title: data.title,
         description: data.description || null,
+        location: data.location || null,
         event_date: eventDate,
         end_date: endDate,
         reminder_minutes: data.reminder_minutes || 15,
       });
 
-      // 2. Синхронизируем с Google Calendar
+      // 2. Синхронизируем с Google Calendar (per-user OAuth2)
       try {
-        const gcalEvent = await createGoogleEvent({
+        const gcalEventData = {
           summary: data.title,
           description: data.description || '',
           start: { dateTime: eventDate.toISOString() },
@@ -232,14 +270,44 @@ class MessageProcessor {
             useDefault: false,
             overrides: [{ method: 'popup', minutes: data.reminder_minutes || 15 }],
           },
-        });
+        };
+        if (data.location) gcalEventData.location = data.location;
+
+        const gcalEvent = await createGoogleEvent(userId, gcalEventData);
 
         // Сохраняем Google Calendar ID для будущей синхронизации
         await event.update({ google_calendar_event_id: gcalEvent.id });
         logger.info(`Событие синхронизировано с Google Calendar: gcal_id=${gcalEvent.id}`);
       } catch (gcalError) {
         // Google Calendar недоступен — событие всё равно сохранено в БД
-        logger.warn('Google Calendar sync failed (событие сохранено локально):', gcalError.message);
+        logger.warn('Google Calendar sync failed (событие сохранено локально):', {
+          message: gcalError.message,
+          code: gcalError.code,
+          errors: gcalError.errors,
+          status: gcalError.status,
+          stack: gcalError.stack?.split('\n').slice(0, 3).join(' | '),
+        });
+      }
+
+      // 3. Автоматическое напоминание в Telegram (за reminder_minutes до события)
+      const reminderMinutes = data.reminder_minutes || 15;
+      const remindAt = new Date(eventDate.getTime() - reminderMinutes * 60 * 1000);
+
+      // Создаём напоминание только если время ещё не прошло
+      if (remindAt > new Date()) {
+        try {
+          await models.Reminder.create({
+            user_id: userId,
+            text: `Через ${reminderMinutes} мин: ${data.title}${data.location ? ` (${data.location})` : ''}`,
+            remind_at: remindAt,
+            event_id: event.id,
+            is_recurring: false,
+            is_sent: false,
+          });
+          logger.info(`Авто-напоминание создано: за ${reminderMinutes} мин до "${data.title}"`);
+        } catch (remErr) {
+          logger.warn('Ошибка создания авто-напоминания:', remErr.message);
+        }
       }
 
       logger.info(`Создано событие: id=${event.id}, user=${userId}`);
@@ -250,6 +318,315 @@ class MessageProcessor {
       };
     } catch (error) {
       logger.error('Ошибка создания события:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Обновить существующее событие (локально + Google Calendar)
+   */
+  async executeUpdateEvent(userId, data) {
+    if (!data?.title) {
+      logger.warn('executeUpdateEvent: нет title для поиска события');
+      return null;
+    }
+
+    try {
+      // Ищем событие по title (последнее совпадение)
+      const event = await models.Event.findOne({
+        where: {
+          user_id: userId,
+          title: { [Op.iLike]: `%${data.title}%` },
+        },
+        order: [['created_at', 'DESC']],
+      });
+
+      if (!event) {
+        logger.warn(`executeUpdateEvent: событие "${data.title}" не найдено для user=${userId}`);
+        return null;
+      }
+
+      // Обновляем локально
+      const updateData = {};
+      if (data.new_title) updateData.title = data.new_title;
+      if (data.location) updateData.location = data.location;
+      if (data.description) updateData.description = data.description;
+      if (data.event_date) updateData.event_date = new Date(data.event_date);
+      if (data.end_date) updateData.end_date = new Date(data.end_date);
+
+      await event.update(updateData);
+
+      // Обновляем в Google Calendar (patch — частичное обновление)
+      if (event.google_calendar_event_id) {
+        try {
+          const gcalUpdate = {};
+          if (data.new_title) gcalUpdate.summary = data.new_title;
+          if (data.location) gcalUpdate.location = data.location;
+          if (data.description) gcalUpdate.description = data.description;
+          if (data.event_date) gcalUpdate.start = { dateTime: new Date(data.event_date).toISOString() };
+          if (data.end_date) gcalUpdate.end = { dateTime: new Date(data.end_date).toISOString() };
+
+          await updateGoogleEvent(userId, event.google_calendar_event_id, gcalUpdate);
+          logger.info(`Событие обновлено в Google Calendar: gcal_id=${event.google_calendar_event_id}`);
+        } catch (gcalError) {
+          logger.warn('Google Calendar update failed:', {
+            message: gcalError.message,
+            code: gcalError.code,
+            errors: gcalError.errors,
+            status: gcalError.status,
+            stack: gcalError.stack?.split('\n').slice(0, 3).join(' | '),
+          });
+        }
+      }
+
+      logger.info(`Обновлено событие: id=${event.id}, user=${userId}`);
+      return { action: 'update_event', result: { event_id: event.id } };
+    } catch (error) {
+      logger.error('Ошибка обновления события:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Удалить событие (локально + Google Calendar)
+   */
+  async executeDeleteEvent(userId, data) {
+    if (!data?.title) {
+      logger.warn('executeDeleteEvent: нет title для поиска события');
+      return null;
+    }
+
+    try {
+      const event = await models.Event.findOne({
+        where: {
+          user_id: userId,
+          title: { [Op.iLike]: `%${data.title}%` },
+        },
+        order: [['created_at', 'DESC']],
+      });
+
+      if (!event) {
+        logger.warn(`executeDeleteEvent: событие "${data.title}" не найдено для user=${userId}`);
+        return null;
+      }
+
+      // Удаляем из Google Calendar
+      if (event.google_calendar_event_id) {
+        try {
+          await deleteGoogleEvent(userId, event.google_calendar_event_id);
+          logger.info(`Событие удалено из Google Calendar: gcal_id=${event.google_calendar_event_id}`);
+        } catch (gcalError) {
+          logger.warn('Google Calendar delete failed:', gcalError.message);
+        }
+      }
+
+      const eventTitle = event.title;
+      await event.destroy();
+      logger.info(`Удалено событие: "${eventTitle}", user=${userId}`);
+
+      return { action: 'delete_event', result: { deleted: eventTitle } };
+    } catch (error) {
+      logger.error('Ошибка удаления события:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Удалить заметку
+   */
+  async executeDeleteNote(userId, data) {
+    const searchText = data?.content || data?.text || data?.title;
+    if (!searchText) {
+      logger.warn('executeDeleteNote: нет текста для поиска заметки');
+      return null;
+    }
+
+    try {
+      const note = await models.Note.findOne({
+        where: {
+          user_id: userId,
+          content: { [Op.iLike]: `%${searchText}%` },
+        },
+        order: [['created_at', 'DESC']],
+      });
+
+      if (!note) {
+        logger.warn(`executeDeleteNote: заметка "${searchText}" не найдена для user=${userId}`);
+        return null;
+      }
+
+      const noteContent = note.content;
+      await note.destroy();
+      logger.info(`Удалена заметка: "${noteContent}", user=${userId}`);
+
+      return { action: 'delete_note', result: { deleted: noteContent } };
+    } catch (error) {
+      logger.error('Ошибка удаления заметки:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Удалить задачу
+   */
+  async executeDeleteTask(userId, data) {
+    if (!data?.title) {
+      logger.warn('executeDeleteTask: нет title для поиска задачи');
+      return null;
+    }
+
+    try {
+      const task = await models.Task.findOne({
+        where: {
+          created_by: userId,
+          title: { [Op.iLike]: `%${data.title}%` },
+        },
+        order: [['created_at', 'DESC']],
+      });
+
+      if (!task) {
+        logger.warn(`executeDeleteTask: задача "${data.title}" не найдена для user=${userId}`);
+        return null;
+      }
+
+      const taskTitle = task.title;
+      await task.destroy();
+      logger.info(`Удалена задача: "${taskTitle}", user=${userId}`);
+
+      return { action: 'delete_task', result: { deleted: taskTitle } };
+    } catch (error) {
+      logger.error('Ошибка удаления задачи:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Создать напоминание
+   */
+  async executeCreateReminder(userId, data) {
+    if (!data?.text || !data?.remind_at) {
+      logger.warn('executeCreateReminder: нет text или remind_at');
+      return null;
+    }
+
+    try {
+      const reminder = await models.Reminder.create({
+        user_id: userId,
+        text: data.text,
+        remind_at: new Date(data.remind_at),
+        is_recurring: data.is_recurring || false,
+        recurrence_rule: data.recurrence_rule || null,
+        is_sent: false,
+      });
+
+      logger.info(`Создано напоминание: id=${reminder.id}, user=${userId}, at=${data.remind_at}`);
+
+      return {
+        action: 'create_reminder',
+        result: { reminder_id: reminder.id, remind_at: data.remind_at },
+      };
+    } catch (error) {
+      logger.error('Ошибка создания напоминания:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Показать список заметок, задач или событий
+   */
+  async executeList(userId, data, aiResponse) {
+    try {
+      const type = data?.type || 'all';
+
+      let notes = [];
+      let tasks = [];
+      let events = [];
+      let reminders = [];
+
+      if (type === 'all' || type === 'notes') {
+        notes = await models.Note.findAll({
+          where: { user_id: userId },
+          order: [['created_at', 'DESC']],
+          limit: 10,
+        });
+      }
+
+      if (type === 'all' || type === 'tasks') {
+        tasks = await models.Task.findAll({
+          where: { created_by: userId },
+          order: [['created_at', 'DESC']],
+          limit: 10,
+        });
+      }
+
+      if (type === 'all' || type === 'events') {
+        events = await models.Event.findAll({
+          where: { user_id: userId },
+          order: [['event_date', 'ASC']],
+          limit: 10,
+        });
+      }
+
+      if (type === 'all' || type === 'reminders') {
+        reminders = await models.Reminder.findAll({
+          where: { user_id: userId, is_sent: false },
+          order: [['remind_at', 'ASC']],
+          limit: 10,
+        });
+      }
+
+      // Формируем текстовый ответ с реальными данными
+      let enrichedResponse = '';
+
+      if (notes.length > 0) {
+        enrichedResponse += '📝 **Заметки:**\n';
+        notes.forEach((n, i) => {
+          enrichedResponse += `${i + 1}. ${n.content}\n`;
+        });
+        enrichedResponse += '\n';
+      }
+
+      if (tasks.length > 0) {
+        enrichedResponse += '✅ **Задачи:**\n';
+        tasks.forEach((t, i) => {
+          const status = t.status === 'completed' ? '✓' : '○';
+          enrichedResponse += `${status} ${t.title} [${t.priority}]\n`;
+        });
+        enrichedResponse += '\n';
+      }
+
+      if (events.length > 0) {
+        enrichedResponse += '📅 **События:**\n';
+        events.forEach((e, i) => {
+          const date = new Date(e.event_date).toLocaleString('ru-RU');
+          enrichedResponse += `${i + 1}. ${e.title} — ${date}\n`;
+        });
+        enrichedResponse += '\n';
+      }
+
+      if (reminders.length > 0) {
+        enrichedResponse += '🔔 **Напоминания:**\n';
+        reminders.forEach((r, i) => {
+          const date = new Date(r.remind_at).toLocaleString('ru-RU');
+          const recurring = r.is_recurring ? ' 🔄' : '';
+          enrichedResponse += `${i + 1}. ${r.text} — ${date}${recurring}\n`;
+        });
+        enrichedResponse += '\n';
+      }
+
+      if (!enrichedResponse) {
+        enrichedResponse = 'У тебя пока нет заметок, задач, событий или напоминаний. Создай что-нибудь!';
+      }
+
+      logger.info(`Список: notes=${notes.length}, tasks=${tasks.length}, events=${events.length}, reminders=${reminders.length}`);
+
+      return {
+        action: 'list',
+        result: { notes: notes.length, tasks: tasks.length, events: events.length },
+        enrichedResponse,
+      };
+    } catch (error) {
+      logger.error('Ошибка executeList:', error);
       return null;
     }
   }

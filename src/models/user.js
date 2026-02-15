@@ -1,4 +1,5 @@
 import { DataTypes } from 'sequelize';
+import { encrypt, decrypt } from '../utils/encryption.js';
 
 export default (sequelize) => {
   const User = sequelize.define(
@@ -52,6 +53,34 @@ export default (sequelize) => {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: true,
+      },
+
+      // Google Calendar OAuth2 (per-user, зашифровано AES-256-GCM)
+      google_refresh_token: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        set(value) {
+          this.setDataValue('google_refresh_token', value ? encrypt(value) : null);
+        },
+        get() {
+          const raw = this.getDataValue('google_refresh_token');
+          return raw ? decrypt(raw) : null;
+        },
+      },
+      google_access_token: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        set(value) {
+          this.setDataValue('google_access_token', value ? encrypt(value) : null);
+        },
+        get() {
+          const raw = this.getDataValue('google_access_token');
+          return raw ? decrypt(raw) : null;
+        },
+      },
+      google_token_expiry: {
+        type: DataTypes.DATE,
+        allowNull: true,
       },
     },
     {

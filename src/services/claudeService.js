@@ -72,27 +72,36 @@ class ClaudeService {
 - Проактивные предложения
 - На русском языке
 
-**Intent Detection:**
-Определяй намерение пользователя и возвращай один из:
-- create_note - создать заметку
-- create_task - создать задачу
-- create_event - создать событие
-- search - поиск информации
-- list - показать список
-- chat - обычный разговор
-- help - помощь
+**Действия (actions):**
+Ты можешь выполнять НЕСКОЛЬКО действий в одном сообщении. Типы:
+- create_note - создать заметку (data: { content, category })
+- create_task - создать задачу (data: { title, priority, description })
+- create_event - создать событие (data: { title, event_date (ISO 8601), end_date, description, location })
+- update_event - обновить существующее событие (data: { title (для поиска), new_title (новое название, если переименовывают), location, description, event_date, end_date })
+- delete_event - удалить событие (data: { title (для поиска) })
+- delete_note - удалить заметку (data: { content (текст или часть текста для поиска) })
+- delete_task - удалить задачу (data: { title (для поиска) })
+- create_reminder - создать напоминание (data: { text, remind_at (ISO 8601), is_recurring (bool), recurrence_rule ("daily"|"weekly"|"monthly") })
+- list - показать список (data: { type: "notes"|"tasks"|"events"|"reminders"|"all" })
+- chat - обычный разговор (без data)
 
-**Формат ответа:**
-Всегда отвечай в JSON формате:
+**ВАЖНО при удалении:** Всегда подтверждай в ответе что именно удалил. Если не уверен какой элемент имеется в виду — переспроси.
+**ВАЖНО при напоминаниях:** "через 2 часа" — вычисли точное время. "каждый понедельник" — is_recurring=true, recurrence_rule="weekly". Всегда подтверждай время напоминания в ответе.
+
+**Формат ответа — ВСЕГДА JSON:**
 {
-  "intent": "create_task",
-  "response": "Создал задачу 'Подготовить отчет' с высоким приоритетом",
-  "data": {
-    "title": "Подготовить отчет",
-    "priority": "high",
-    "description": "..."
-  }
-}`;
+  "response": "Текст ответа пользователю",
+  "actions": [
+    { "type": "create_note", "data": { "content": "Купить молоко" } },
+    { "type": "create_event", "data": { "title": "Встреча", "event_date": "2026-02-14T15:00:00" } }
+  ]
+}
+
+Если действий нет (просто разговор):
+{ "response": "Привет! Чем помочь?", "actions": [] }
+
+Сегодняшняя дата: ${new Date().toISOString().split('T')[0]}.
+Если пользователь говорит "завтра" — вычисли дату. "В 15:00" — используй формат ISO 8601.`;
   }
 
   /**
@@ -229,14 +238,17 @@ class ClaudeService {
    * Форматируем историю диалога для Claude API
    */
   _formatHistory(history) {
-    return history.map((msg) => ({
-      role: msg.role === 'user' ? 'user' : 'assistant',
-      content: msg.content,
-    }));
+    return history
+      .filter((msg) => msg.content && msg.content.trim() !== '')
+      .map((msg) => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      }));
   }
 
   /**
    * Парсим ответ от Claude
+   * Возвращает: { response: string, actions: Array<{ type, data }> }
    */
   _parseResponse(response) {
     const content = response.content[0].text;
@@ -246,31 +258,19 @@ class ClaudeService {
       const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
       if (codeBlockMatch) {
         const parsed = JSON.parse(codeBlockMatch[1].trim());
-        return {
-          intent: parsed.intent || 'chat',
-          response: parsed.response || content,
-          data: parsed.data || null,
-        };
+        return this._normalizeResponse(parsed, content);
       }
 
       // Способ 2: весь ответ — чистый JSON
       const parsed = JSON.parse(content.trim());
-      return {
-        intent: parsed.intent || 'chat',
-        response: parsed.response || content,
-        data: parsed.data || null,
-      };
+      return this._normalizeResponse(parsed, content);
     } catch (error) {
       // Способ 3: ищем JSON объект внутри текста
-      const jsonMatch = content.match(/\{[\s\S]*"intent"[\s\S]*"response"[\s\S]*\}/);
+      const jsonMatch = content.match(/\{[\s\S]*"response"[\s\S]*\}/);
       if (jsonMatch) {
         try {
           const parsed = JSON.parse(jsonMatch[0]);
-          return {
-            intent: parsed.intent || 'chat',
-            response: parsed.response || content,
-            data: parsed.data || null,
-          };
+          return this._normalizeResponse(parsed, content);
         } catch (e) {
           // JSON невалидный, возвращаем как текст
         }
@@ -278,11 +278,41 @@ class ClaudeService {
 
       // Fallback: не JSON, возвращаем как обычный текст
       return {
-        intent: 'chat',
         response: content,
-        data: null,
+        actions: [],
       };
     }
+  }
+
+  /**
+   * Нормализуем ответ: поддерживаем и старый формат (intent/data) и новый (actions)
+   */
+  _normalizeResponse(parsed, rawContent) {
+    // Новый формат: { response, actions: [...] }
+    if (parsed.actions && Array.isArray(parsed.actions)) {
+      return {
+        response: parsed.response || rawContent,
+        actions: parsed.actions,
+      };
+    }
+
+    // Старый формат: { intent, response, data } — конвертируем в actions
+    if (parsed.intent) {
+      const actions = [];
+      if (parsed.intent !== 'chat' && parsed.data) {
+        actions.push({ type: parsed.intent, data: parsed.data });
+      }
+      return {
+        response: parsed.response || rawContent,
+        actions,
+      };
+    }
+
+    // Только response, без действий
+    return {
+      response: parsed.response || rawContent,
+      actions: [],
+    };
   }
 
   /**
@@ -332,27 +362,9 @@ class ClaudeService {
       logger.error('Fallback из-за ошибки:', error.message);
     }
 
-    // Простое определение intent по ключевым словам
-    let intent = 'chat';
-    let response = 'AI сервис временно недоступен. Попробуйте позже.';
-
-    if (/создай|добавь|запиши/.test(userMessage)) {
-      if (/задач/i.test(userMessage)) {
-        intent = 'create_task';
-        response = 'Хочу создать задачу, но AI недоступен. Используйте REST API.';
-      } else if (/событ|встреч/i.test(userMessage)) {
-        intent = 'create_event';
-        response = 'Хочу создать событие, но AI недоступен. Используйте REST API.';
-      } else {
-        intent = 'create_note';
-        response = 'Хочу создать заметку, но AI недоступен. Используйте REST API.';
-      }
-    }
-
     return {
-      intent,
-      response,
-      data: null,
+      response: 'AI сервис временно недоступен. Попробуйте позже.',
+      actions: [],
       modelUsed: 'fallback',
       tokensUsed: { input_tokens: 0, output_tokens: 0 },
     };
